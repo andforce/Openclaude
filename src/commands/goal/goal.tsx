@@ -9,6 +9,7 @@ import {
   formatElapsed,
   formatGoalStatus,
   isGoalContinuationPrompt,
+  parseGoalArgs,
 } from '../../utils/goal.js'
 import { removeByFilter } from '../../utils/messageQueueManager.js'
 import { renderToString } from '../../utils/staticRender.js'
@@ -82,9 +83,12 @@ export async function call(
 ): Promise<React.ReactNode> {
   const { getAppState, setAppState } = context
   const trimmed = args.trim()
-  const [first, ...restParts] = trimmed.split(/\s+/)
-  const sub = first?.toLowerCase() ?? ''
-  const rest = restParts.join(' ')
+  const firstTokenMatch = trimmed.match(/^\S+/)
+  const firstToken = firstTokenMatch?.[0] ?? ''
+  const sub = firstToken.toLowerCase()
+  const rest = firstTokenMatch
+    ? trimmed.slice(firstTokenMatch[0].length).trimStart()
+    : ''
 
   const appState = getAppState()
   const existing = appState.goal
@@ -127,10 +131,21 @@ export async function call(
       return null
     }
     setGoal(setAppState, g =>
-      g ? { ...g, status: 'pursuing', lastUpdatedAt: Date.now() } : g,
+      g
+        ? {
+            ...g,
+            status: 'pursuing',
+            continuationCount: 0,
+            startedAt: Date.now(),
+            startCostUSD: getTotalCostUSD(),
+            lastUpdatedAt: Date.now(),
+          }
+        : g,
     )
     clearQueuedGoalContinuations()
-    onDone('Goal resumed. Auto-continuation will start on the next idle tick.')
+    onDone(
+      'Goal resumed. Continuation count and budget window reset; auto-continuation will start on the next idle tick.',
+    )
     return null
   }
 
@@ -164,24 +179,46 @@ export async function call(
     return null
   }
 
-  // Anything else is treated as a new objective.
-  const objective = sub === 'set' && rest ? rest : trimmed
+  // Anything else is treated as a new objective. Flags: --budget=$5 --time=30m
+  const argSource = sub === 'set' ? rest : trimmed
+  const parsed = parseGoalArgs(argSource)
+  if (parsed.errors.length > 0) {
+    onDone(
+      `Could not parse /goal arguments:\n  - ${parsed.errors.join('\n  - ')}\nUsage: /goal [--budget=$5] [--time=30m] <objective>`,
+    )
+    return null
+  }
+  if (!parsed.objective) {
+    onDone(
+      'Missing objective.\nUsage: /goal [--budget=$5] [--time=30m] <objective>',
+    )
+    return null
+  }
   const now = Date.now()
   const newGoal: Goal = {
     id: randomUUID(),
-    objective,
+    objective: parsed.objective,
     status: 'pursuing',
     startedAt: now,
     startCostUSD: getTotalCostUSD(),
     continuationCount: 0,
+    budgetUSD: parsed.budgetUSD,
+    budgetDurationMs: parsed.budgetDurationMs,
     lastUpdatedAt: now,
   }
   setGoal(setAppState, () => newGoal)
   clearQueuedGoalContinuations()
 
+  const budgetParts: string[] = []
+  if (parsed.budgetUSD !== undefined)
+    budgetParts.push(`$${parsed.budgetUSD.toFixed(2)}`)
+  if (parsed.budgetDurationMs !== undefined)
+    budgetParts.push(formatElapsed(parsed.budgetDurationMs))
+  const budgetSuffix =
+    budgetParts.length > 0 ? ` (budget: ${budgetParts.join(', ')})` : ''
   const message = inPlanMode
-    ? `Goal set: ${objective}\nAuto-continuation is disabled while in Plan mode. Exit plan mode (Shift+Tab) to begin pursuit.`
-    : `Goal set: ${objective}\nThe agent will auto-continue toward this objective until it is achieved, paused, or budget-limited. Use /goal pause, /goal resume, or /goal clear to manage it.`
+    ? `Goal set: ${parsed.objective}${budgetSuffix}\nAuto-continuation is disabled while in Plan mode. Exit plan mode (Shift+Tab) to begin pursuit.`
+    : `Goal set: ${parsed.objective}${budgetSuffix}\nThe agent will auto-continue toward this objective until it is achieved, unmet, paused, budget-limited, or hits the continuation cap. Use /goal pause, /goal resume, or /goal clear to manage it.`
   onDone(message, {
     metaMessages: [
       `[goal] Active goal id: ${newGoal.id}. If calling goal_update for this goal, include goal_id='${newGoal.id}'.`,

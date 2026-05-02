@@ -3,8 +3,11 @@ import { MessageResponse } from '../../components/MessageResponse.js'
 import { Text } from '../../ink.js'
 import type { Output } from './GoalUpdateTool.js'
 
-export function renderToolUseMessage(): React.ReactNode {
-  return ''
+export function renderToolUseMessage(input: {
+  status?: 'achieved' | 'unmet'
+}): React.ReactNode {
+  const verb = input.status === 'unmet' ? 'unmet' : 'achieved'
+  return <Text dimColor>marking goal {verb}…</Text>
 }
 
 export function renderToolResultMessage(output: Output): React.ReactNode {
