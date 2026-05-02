@@ -86,6 +86,26 @@ export type FooterItem =
   | 'bridge'
   | 'companion'
 
+export type GoalStatus =
+  | 'pursuing'
+  | 'paused'
+  | 'achieved'
+  | 'unmet'
+  | 'budget-limited'
+
+export type Goal = {
+  id: string
+  objective: string
+  status: GoalStatus
+  startedAt: number
+  startCostUSD: number
+  continuationCount: number
+  budgetUSD?: number
+  budgetDurationMs?: number
+  lastReason?: string
+  lastUpdatedAt: number
+}
+
 export type AppState = DeepImmutable<{
   settings: SettingsJson
   verbose: boolean
@@ -155,6 +175,10 @@ export type AppState = DeepImmutable<{
   replBridgeInitialName: string | undefined
   // Always-on bridge: first-time remote dialog pending (set by /remote-control command)
   showRemoteCallout: boolean
+  // /goal — long-running autonomous objective. Set via `/goal <objective>`.
+  // The post-turn idle hook auto-enqueues a continuation prompt while
+  // status === 'pursuing'. Intentionally not persisted across sessions.
+  goal: Goal | undefined
 }> & {
   // Unified task state - excluded from DeepImmutable because TaskState contains function types
   tasks: { [taskId: string]: TaskState }
@@ -497,6 +521,7 @@ export function getDefaultAppState(): AppState {
     replBridgeError: undefined,
     replBridgeInitialName: undefined,
     showRemoteCallout: false,
+    goal: undefined,
     toolPermissionContext: {
       ...getEmptyToolPermissionContext(),
       mode: initialMode,

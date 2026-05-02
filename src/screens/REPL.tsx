@@ -140,6 +140,7 @@ import type { ThinkingConfig } from '../utils/thinking.js';
 import { gracefulShutdownSync } from '../utils/gracefulShutdown.js';
 import { handlePromptSubmit, type PromptInputHelpers } from '../utils/handlePromptSubmit.js';
 import { useQueueProcessor } from '../hooks/useQueueProcessor.js';
+import { useGoalAutoContinue } from '../hooks/useGoalAutoContinue.js';
 import { useMailboxBridge } from '../hooks/useMailboxBridge.js';
 import { useTelegramBridge } from '../hooks/useTelegramBridge.js';
 import { queryCheckpoint, logQueryProfileReport } from '../utils/queryProfiler.js';
@@ -4064,6 +4065,7 @@ export function REPL({
     hasActiveLocalJsxUI: isShowingLocalJSXCommand,
     queryGuard
   });
+  useGoalAutoContinue(queryGuard);
 
   // We'll use the global lastInteractionTime from state.ts
 

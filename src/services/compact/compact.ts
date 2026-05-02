@@ -51,6 +51,7 @@ import {
   type CacheSafeParams,
   runForkedAgent,
 } from '../../utils/forkedAgent.js'
+import { buildGoalReminder } from '../../utils/goal.js'
 import {
   executePostCompactHooks,
   executePreCompactHooks,
@@ -623,6 +624,19 @@ export async function compactConversation(
       }),
     ]
 
+    // Goal continuity across compaction: AppState.goal survives, but the
+    // model's record of the objective lives only in (now-summarized) messages.
+    // Append a brief reminder so it stays focused on the active goal.
+    const activeGoal = appState.goal
+    if (activeGoal && activeGoal.status === 'pursuing') {
+      summaryMessages.push(
+        createUserMessage({
+          content: buildGoalReminder(activeGoal),
+          isMeta: true,
+        }),
+      )
+    }
+
     // Previously "postCompactTokenCount" — renamed because this is the
     // compact API call's total usage (input_tokens ≈ preCompactTokenCount),
     // NOT the size of the resulting context. Kept for event-field continuity.
@@ -1043,6 +1057,17 @@ export async function partialCompactConversation(
           : { isVisibleInTranscriptOnly: true as const }),
       }),
     ]
+
+    // Goal continuity across partial compaction (mirrors full-compaction path).
+    const activeGoalPartial = context.getAppState().goal
+    if (activeGoalPartial && activeGoalPartial.status === 'pursuing') {
+      summaryMessages.push(
+        createUserMessage({
+          content: buildGoalReminder(activeGoalPartial),
+          isMeta: true,
+        }),
+      )
+    }
 
     if (feature('PROMPT_CACHE_BREAK_DETECTION')) {
       notifyCompaction(
