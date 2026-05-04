@@ -91,6 +91,20 @@ tail -f /tmp/openclaude-debug.log | rg "API REQUEST|API:request|Anthropic SDK"
 
 配置 **Telegram Bot 桥接**：设置 Bot Token、允许的 Telegram user id 等，用于在 Telegram 侧与 CLI 会话联动。未正确配置 Token 或授权用户时，相关功能会报错提示先在 `/telegram` 中完成配置。
 
+### `/goal`
+
+设置或管理一个**长跑式自主目标**。设定后，agent 会在每一轮自动朝目标推进，直到：达成、判定不可达、被暂停、达到预算/时间上限，或触达自动续跑次数上限。
+
+用法：
+
+```text
+/goal <objective>                       # 设定目标并开始
+/goal --budget=$5 --time=30m <objective># 带预算/时长上限
+/goal pause | resume | clear            # 暂停 / 恢复 / 清除
+```
+
+> 需要 **2.1.92** 及以上版本（旧版本如 2.1.91 不含此命令）。
+
 ---
 
 从源码本地构建请参考仓库内 `AGENTS.md` / `CLAUDE.md`（需 **Bun** 与 **pnpm**）。
