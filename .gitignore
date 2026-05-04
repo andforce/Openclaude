@@ -2,6 +2,7 @@ dist/
 .DS_Store
 .idea/
 node_modules/
+.openclaude-debug/
 opencode/
 .ai-team/
 .obsidian/
