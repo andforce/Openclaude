@@ -21,10 +21,17 @@ import {
 } from '../../utils/config.js'
 import {
   CUSTOM_ANTHROPIC_PROVIDER_ID,
+  getAnthropicCompatibleModelId,
   getCustomAnthropicProviderLabel,
   isCustomAnthropicProviderId,
+  parseAnthropicCompatibleModelValue,
 } from '../../utils/customAnthropicProviders.js'
 import { stripSignatureBlocks } from '../../utils/messages.js'
+import {
+  clearUserSpecifiedModelSetting,
+  getUserSpecifiedModelSetting,
+  type ModelSetting,
+} from '../../utils/model/model.js'
 import {
   checkAndDisableAutoModeIfNeeded,
   checkAndDisableBypassPermissionsIfNeeded,
@@ -83,6 +90,23 @@ function getDisconnectableProviders(): DisconnectableProvider[] {
     info,
     isActive: config.activeProvider === providerId,
   }))
+}
+
+function isModelOwnedByProvider(
+  model: ModelSetting | undefined,
+  providerId: string,
+  provider: ConnectedProviderInfo,
+): boolean {
+  if (!model) {
+    return false
+  }
+
+  const scopedModel = parseAnthropicCompatibleModelValue(model)
+  if (scopedModel) {
+    return scopedModel.providerId === providerId
+  }
+
+  return provider.defaultModel === getAnthropicCompatibleModelId(model)
 }
 
 function EmptyState({
@@ -238,6 +262,7 @@ function DisconnectDialog({
     try {
       let removed = false
       let hasRemainingProviders = true
+      let shouldClearModelSelection = false
       saveGlobalConfig(current => {
         const connectedProviders = current.connectedProviders ?? {}
         if (!(step.provider.providerId in connectedProviders)) {
@@ -248,6 +273,15 @@ function DisconnectDialog({
         const { [step.provider.providerId]: _removed, ...rest } = connectedProviders
         const remainingProviderIds = Object.keys(rest)
         hasRemainingProviders = remainingProviderIds.length > 0
+        const currentModel = getUserSpecifiedModelSetting()
+        shouldClearModelSelection =
+          !hasRemainingProviders ||
+          current.activeProvider === step.provider.providerId ||
+          isModelOwnedByProvider(
+            currentModel,
+            step.provider.providerId,
+            step.provider.info,
+          )
 
         let anthropicCustomModelsCaches = current.anthropicCustomModelsCaches
         if (
@@ -300,6 +334,15 @@ function DisconnectDialog({
         return
       }
 
+      if (shouldClearModelSelection) {
+        clearUserSpecifiedModelSetting()
+        context.setAppState(prev => ({
+          ...prev,
+          mainLoopModel: null,
+          mainLoopModelForSession: null,
+        }))
+      }
+
       if (!hasRemainingProviders) {
         setStep({ type: 're-login' })
         return
@@ -318,7 +361,7 @@ function DisconnectDialog({
             : 'Failed to disconnect provider',
       })
     }
-  }, [step])
+  }, [context, step])
 
   const handleReloginDone = React.useCallback(
     async (success: boolean) => {

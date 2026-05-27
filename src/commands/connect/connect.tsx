@@ -19,6 +19,7 @@ import {
   isCustomAnthropicProviderId,
   resolveCustomAnthropicProviderId,
 } from '../../utils/customAnthropicProviders.js'
+import { clearUserSpecifiedModelSetting } from '../../utils/model/model.js'
 
 const COPILOT_CLIENT_ID = 'Ov23li8tweQw6odWQebz'
 const COPILOT_DEVICE_CODE_URL = 'https://github.com/login/device/code'
@@ -636,9 +637,11 @@ function OptionalMaskedKeyInput({
 function ConnectDialog({
   onDone,
   onChangeAPIKey,
+  onProviderActivated,
 }: {
   onDone: LocalJSXCommandOnDone
   onChangeAPIKey: () => void
+  onProviderActivated: () => void
 }) {
   const [step, setStep] = React.useState<ConnectStep>({ type: 'select-provider' })
 
@@ -732,6 +735,7 @@ function ConnectDialog({
       }))
 
       onChangeAPIKey()
+      onProviderActivated()
       setStep({ type: 'success', providerId })
     } catch (error) {
       setStep({
@@ -756,6 +760,7 @@ function ConnectDialog({
       }))
 
       onChangeAPIKey()
+      onProviderActivated()
       // Pre-fetch and cache the model list in background
       fetchCopilotModels().then(models => {
         saveGlobalConfig(current => ({
@@ -1104,6 +1109,7 @@ function ConnectDialog({
                 openrouterModelsCache: st.models.map(id => ({ id })),
               }))
               onChangeAPIKey()
+              onProviderActivated()
               setStep({ type: 'success', providerId: 'openrouter' })
             }}
             onCancel={handleCancel}
@@ -1239,6 +1245,7 @@ function ConnectDialog({
                 openaiCustomModelsCache: st.models.map(id => ({ id })),
               }))
               onChangeAPIKey()
+              onProviderActivated()
               setStep({ type: 'success', providerId: 'custom-openai' })
             }}
             onCancel={handleCancel}
@@ -1413,6 +1420,7 @@ function ConnectDialog({
                 })(),
               }))
               onChangeAPIKey()
+              onProviderActivated()
               const providerId = resolveCustomAnthropicProviderId(
                 getGlobalConfig(),
                 st.baseUrl || '',
@@ -1514,6 +1522,14 @@ export async function call(
     <ConnectDialog
       onDone={onDone}
       onChangeAPIKey={context.onChangeAPIKey}
+      onProviderActivated={() => {
+        clearUserSpecifiedModelSetting()
+        context.setAppState(prev => ({
+          ...prev,
+          mainLoopModel: null,
+          mainLoopModelForSession: null,
+        }))
+      }}
     />
   )
 }

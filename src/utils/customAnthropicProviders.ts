@@ -2,8 +2,14 @@ import type { ConnectedProviderInfo, GlobalConfig } from './config.js'
 
 export const CUSTOM_ANTHROPIC_PROVIDER_ID = 'custom-anthropic'
 export const CUSTOM_ANTHROPIC_PROVIDER_PREFIX = 'custom-anthropic:'
+export const ANTHROPIC_COMPATIBLE_MODEL_PREFIX = 'anthropic-compatible:'
 
 type ModelCache = Array<{ id: string }>
+
+export type AnthropicCompatibleModelRef = {
+  providerId: string
+  modelId: string
+}
 
 export function isCustomAnthropicProviderId(
   providerId: string | undefined,
@@ -122,6 +128,44 @@ export function getCustomAnthropicProviderLabel(
   return endpoint
     ? `Custom Anthropic (${endpoint})`
     : 'Custom Anthropic-compatible API'
+}
+
+export function createAnthropicCompatibleModelValue(
+  providerId: string,
+  modelId: string,
+): string {
+  return `${ANTHROPIC_COMPATIBLE_MODEL_PREFIX}${encodeURIComponent(providerId)}:${modelId}`
+}
+
+export function parseAnthropicCompatibleModelValue(
+  value: string | undefined | null,
+): AnthropicCompatibleModelRef | undefined {
+  if (!value?.startsWith(ANTHROPIC_COMPATIBLE_MODEL_PREFIX)) {
+    return undefined
+  }
+
+  const rest = value.slice(ANTHROPIC_COMPATIBLE_MODEL_PREFIX.length)
+  const separator = rest.indexOf(':')
+  if (separator <= 0) {
+    return undefined
+  }
+
+  const encodedProviderId = rest.slice(0, separator)
+  const modelId = rest.slice(separator + 1).trim()
+  if (!modelId) {
+    return undefined
+  }
+
+  try {
+    const providerId = decodeURIComponent(encodedProviderId)
+    return providerId ? { providerId, modelId } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function getAnthropicCompatibleModelId(model: string): string {
+  return parseAnthropicCompatibleModelValue(model)?.modelId ?? model
 }
 
 function getEndpointLabel(baseUrl: string | undefined): string | undefined {

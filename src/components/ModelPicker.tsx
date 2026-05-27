@@ -9,7 +9,8 @@ import { Box, Text } from '../ink.js';
 import { useKeybindings } from '../keybindings/useKeybinding.js';
 import { useAppState, useSetAppState } from '../state/AppState.js';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort.js';
-import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
+import { getAnthropicCompatibleModelId } from '../utils/customAnthropicProviders.js';
+import { getDefaultMainLoopModel, getUsableModelSetting, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
 import { getModelOptions } from '../utils/model/modelOptions.js';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings.js';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint.js';
@@ -50,7 +51,8 @@ export function ModelPicker(t0) {
   } = t0;
   const setAppState = useSetAppState();
   const exitState = useExitOnCtrlCDWithKeybindings();
-  const initialValue = initial === null ? NO_PREFERENCE : initial;
+  const usableInitial = getUsableModelSetting(initial);
+  const initialValue = usableInitial === null ? NO_PREFERENCE : usableInitial;
   const [focusedValue, setFocusedValue] = useState(initialValue);
   const isFastMode = useAppState(_temp);
   const [hasToggledEffort, setHasToggledEffort] = useState(false);
@@ -74,25 +76,26 @@ export function ModelPicker(t0) {
     t3 = $[3];
   }
   const modelOptions = t3;
+  const effectiveInitialValue = usableInitial === null ? getEquivalentOptionValue(modelOptions, getDefaultMainLoopModel()) ?? NO_PREFERENCE : getEquivalentOptionValue(modelOptions, usableInitial) ?? usableInitial;
   let t4;
   bb0: {
-    if (initial !== null && !modelOptions.some(opt => opt.value === initial)) {
+    if (usableInitial !== null && !modelOptions.some(opt => opt.value === effectiveInitialValue)) {
       let t5;
-      if ($[4] !== initial) {
-        t5 = modelDisplayString(initial);
-        $[4] = initial;
+      if ($[4] !== usableInitial) {
+        t5 = modelDisplayString(usableInitial);
+        $[4] = usableInitial;
         $[5] = t5;
       } else {
         t5 = $[5];
       }
       let t6;
-      if ($[6] !== initial || $[7] !== t5) {
+      if ($[6] !== usableInitial || $[7] !== t5) {
         t6 = {
-          value: initial,
+          value: usableInitial,
           label: t5,
           description: "Current model"
         };
-        $[6] = initial;
+        $[6] = usableInitial;
         $[7] = t5;
         $[8] = t6;
       } else {
@@ -123,9 +126,9 @@ export function ModelPicker(t0) {
   }
   const selectOptions = t5;
   let t6;
-  if ($[14] !== initialValue || $[15] !== selectOptions) {
-    t6 = selectOptions.some(_ => _.value === initialValue) ? initialValue : selectOptions[0]?.value ?? undefined;
-    $[14] = initialValue;
+  if ($[14] !== effectiveInitialValue || $[15] !== selectOptions) {
+    t6 = selectOptions.some(_ => _.value === effectiveInitialValue) ? effectiveInitialValue : selectOptions[0]?.value ?? undefined;
+    $[14] = effectiveInitialValue;
     $[15] = selectOptions;
     $[16] = t6;
   } else {
@@ -291,12 +294,12 @@ export function ModelPicker(t0) {
   }
   const t20 = onCancel ?? _temp4;
   let t21;
-  if ($[49] !== handleFocus || $[50] !== handleSelect || $[51] !== initialFocusValue || $[52] !== initialValue || $[53] !== selectOptions || $[54] !== t20) {
-    t21 = <Box flexDirection="column"><SearchableModelOptionSelect selectedValue={initialValue} initialFocusValue={initialFocusValue} options={selectOptions} onChange={handleSelect} onFocus={handleFocus} onCancel={t20} getSearchText={getModelOptionSearchText} /></Box>;
+  if ($[49] !== handleFocus || $[50] !== handleSelect || $[51] !== initialFocusValue || $[52] !== effectiveInitialValue || $[53] !== selectOptions || $[54] !== t20) {
+    t21 = <Box flexDirection="column"><SearchableModelOptionSelect selectedValue={effectiveInitialValue} initialFocusValue={initialFocusValue} options={selectOptions} onChange={handleSelect} onFocus={handleFocus} onCancel={t20} getSearchText={getModelOptionSearchText} /></Box>;
     $[49] = handleFocus;
     $[50] = handleSelect;
     $[51] = initialFocusValue;
-    $[52] = initialValue;
+    $[52] = effectiveInitialValue;
     $[53] = selectOptions;
     $[54] = t20;
     $[56] = t21;
@@ -382,6 +385,14 @@ function _temp3(opt_0) {
 }
 function getModelOptionSearchText(opt: { label: unknown; description?: string; value: string }): string {
   return `${String(opt.label)} ${opt.description ?? ''} ${opt.value}`
+}
+function getEquivalentOptionValue(options: Array<{ value: ModelSetting }>, model: string): string | undefined {
+  const modelId = getAnthropicCompatibleModelId(model)
+  return options.find(
+    opt =>
+      opt.value !== null &&
+      (opt.value === model || getAnthropicCompatibleModelId(opt.value) === modelId),
+  )?.value ?? undefined
 }
 function _temp2(s_0) {
   return s_0.effortValue;

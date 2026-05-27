@@ -7,6 +7,7 @@ import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { isEnvTruthy } from './envUtils.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
+import { getAnthropicCompatibleModelId } from './customAnthropicProviders.js'
 
 export type { EffortLevel }
 
@@ -21,11 +22,12 @@ export type EffortValue = EffortLevel | number
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
-  const m = model.toLowerCase()
+  const modelId = getAnthropicCompatibleModelId(model)
+  const m = modelId.toLowerCase()
   if (isEnvTruthy(process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT)) {
     return true
   }
-  const supported3P = get3PModelCapabilityOverride(model, 'effort')
+  const supported3P = get3PModelCapabilityOverride(modelId, 'effort')
   if (supported3P !== undefined) {
     return supported3P
   }
@@ -51,14 +53,15 @@ export function modelSupportsEffort(model: string): boolean {
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
 // Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
 export function modelSupportsMaxEffort(model: string): boolean {
-  const supported3P = get3PModelCapabilityOverride(model, 'max_effort')
+  const modelId = getAnthropicCompatibleModelId(model)
+  const supported3P = get3PModelCapabilityOverride(modelId, 'max_effort')
   if (supported3P !== undefined) {
     return supported3P
   }
-  if (model.toLowerCase().includes('opus-4-6')) {
+  if (modelId.toLowerCase().includes('opus-4-6')) {
     return true
   }
-  if (process.env.USER_TYPE === 'ant' && resolveAntModel(model)) {
+  if (process.env.USER_TYPE === 'ant' && resolveAntModel(modelId)) {
     return true
   }
   return false
@@ -279,15 +282,16 @@ export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
 export function getDefaultEffortForModel(
   model: string,
 ): EffortValue | undefined {
+  const modelId = getAnthropicCompatibleModelId(model)
   if (process.env.USER_TYPE === 'ant') {
     const config = getAntModelOverrideConfig()
     const isDefaultModel =
       config?.defaultModel !== undefined &&
-      model.toLowerCase() === config.defaultModel.toLowerCase()
+      modelId.toLowerCase() === config.defaultModel.toLowerCase()
     if (isDefaultModel && config?.defaultModelEffortLevel) {
       return config.defaultModelEffortLevel
     }
-    const antModel = resolveAntModel(model)
+    const antModel = resolveAntModel(modelId)
     if (antModel) {
       if (antModel.defaultEffortLevel) {
         return antModel.defaultEffortLevel
@@ -306,7 +310,7 @@ export function getDefaultEffortForModel(
 
   // Default effort on Opus 4.6 to medium for Pro.
   // Max/Team also get medium when the tengu_grey_step2 config is enabled.
-  if (model.toLowerCase().includes('opus-4-6')) {
+  if (modelId.toLowerCase().includes('opus-4-6')) {
     if (isProSubscriber()) {
       return 'medium'
     }

@@ -10,6 +10,7 @@ import {
   isFastModeSupportedByModel,
 } from '../../utils/fastMode.js'
 import {
+  clearUserSpecifiedModelSetting,
   getDefaultMainLoopModelSetting,
   isOpus1mMergeEnabled,
   renderDefaultModelSetting,
@@ -149,6 +150,9 @@ function applyModelSelection(
   let message = `已切换到模型 ${renderDefaultModelSetting(model ?? getDefaultMainLoopModelSetting())}${model === null ? ' (default)' : ''}`
   let wasFastModeToggledOn: boolean | undefined
 
+  if (model === null) {
+    clearUserSpecifiedModelSetting()
+  }
   store.setState(prev => ({
     ...prev,
     mainLoopModel: model,
@@ -636,6 +640,12 @@ export async function handleTelegramCallback(
               }),
         }
       })(),
+    }))
+    clearUserSpecifiedModelSetting()
+    store.setState(prev => ({
+      ...prev,
+      mainLoopModel: null,
+      mainLoopModelForSession: null,
     }))
 
     pendingConnectModelMenus.delete(event.chatId)

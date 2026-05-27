@@ -5,7 +5,11 @@
  * literals with process.env.USER_TYPE === 'ant' for Bun to remove the codenames
  * during dead code elimination
  */
-import { getMainLoopModelOverride } from '../../bootstrap/state.js'
+import {
+  getMainLoopModelOverride,
+  setInitialMainLoopModel,
+  setMainLoopModelOverride,
+} from '../../bootstrap/state.js'
 import {
   getSubscriptionType,
   isClaudeAISubscriber,
@@ -21,7 +25,10 @@ import {
 import { isEnvTruthy } from '../envUtils.js'
 import { getModelStrings, resolveOverriddenModel } from './modelStrings.js'
 import { formatModelPricing, getOpus46CostTier } from '../modelCost.js'
-import { getSettings_DEPRECATED } from '../settings/settings.js'
+import {
+  getSettings_DEPRECATED,
+  updateSettingsForSource,
+} from '../settings/settings.js'
 import type { PermissionMode } from '../permissions/PermissionMode.js'
 import { getAPIProvider } from './providers.js'
 import { LIGHTNING_BOLT } from '../../constants/figures.js'
@@ -31,8 +38,12 @@ import { capitalize } from '../stringUtils.js'
 import { getGlobalConfig } from '../config.js'
 import { getCopilotModelsCached } from '../../services/api/copilotClient.js'
 import {
+  getAnthropicCompatibleModelId,
   getCustomAnthropicModels,
   getCustomAnthropicProvider,
+  getCustomAnthropicProviderLabel,
+  isCustomAnthropicProviderId,
+  parseAnthropicCompatibleModelValue,
 } from '../customAnthropicProviders.js'
 
 export type ModelShortName = string
@@ -66,13 +77,21 @@ export function isNonCustomOpusModel(model: ModelName): boolean {
  */
 export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
   let specifiedModel: ModelSetting | undefined
+  let specifiedModelSource: 'override' | 'env' | 'settings' | undefined
 
   const modelOverride = getMainLoopModelOverride()
   if (modelOverride !== undefined) {
     specifiedModel = modelOverride
+    specifiedModelSource = 'override'
   } else {
     const settings = getSettings_DEPRECATED() || {}
-    specifiedModel = process.env.ANTHROPIC_MODEL || settings.model || undefined
+    if (process.env.ANTHROPIC_MODEL) {
+      specifiedModel = process.env.ANTHROPIC_MODEL
+      specifiedModelSource = 'env'
+    } else if (settings.model) {
+      specifiedModel = settings.model
+      specifiedModelSource = 'settings'
+    }
   }
 
   // Ignore the user-specified model if it's not in the availableModels allowlist.
@@ -80,7 +99,80 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
     return undefined
   }
 
+  if (
+    specifiedModel &&
+    specifiedModelSource === 'settings' &&
+    isStaleConnectedProviderModelSetting(specifiedModel)
+  ) {
+    return undefined
+  }
+
   return specifiedModel
+}
+
+export function clearUserSpecifiedModelSetting(): void {
+  updateSettingsForSource('userSettings', { model: undefined })
+  setMainLoopModelOverride(null)
+  setInitialMainLoopModel(null)
+}
+
+export function getUsableModelSetting(model: ModelSetting): ModelSetting {
+  if (model && isStaleConnectedProviderModelSetting(model)) {
+    return null
+  }
+  return model
+}
+
+function isStaleConnectedProviderModelSetting(model: string): boolean {
+  const config = getGlobalConfig()
+  const scoped = parseAnthropicCompatibleModelValue(model)
+  if (scoped) {
+    return !config.connectedProviders?.[scoped.providerId]
+  }
+
+  if (isModelAlias(model)) {
+    return false
+  }
+
+  const activeProviderId = config.activeProvider
+  const activeProvider = activeProviderId
+    ? config.connectedProviders?.[activeProviderId]
+    : undefined
+  if (!activeProviderId || !activeProvider) {
+    return false
+  }
+
+  const activeProviderModels = getConnectedProviderModelIds(activeProviderId)
+  return activeProviderModels.size > 0 && !activeProviderModels.has(model)
+}
+
+function getConnectedProviderModelIds(providerId: string): Set<string> {
+  const config = getGlobalConfig()
+  const provider = config.connectedProviders?.[providerId]
+  const modelIds = new Set<string>()
+  if (!provider) {
+    return modelIds
+  }
+
+  if (provider.defaultModel) {
+    modelIds.add(provider.defaultModel)
+  }
+
+  if (providerId === 'openrouter') {
+    for (const row of config.openrouterModelsCache ?? []) {
+      modelIds.add(row.id)
+    }
+  } else if (providerId === 'custom-openai') {
+    for (const row of config.openaiCustomModelsCache ?? []) {
+      modelIds.add(row.id)
+    }
+  } else if (isCustomAnthropicProviderId(providerId)) {
+    for (const row of getCustomAnthropicModels(config, providerId) ?? []) {
+      modelIds.add(row.id)
+    }
+  }
+
+  return modelIds
 }
 
 /**
@@ -154,6 +246,7 @@ export function getRuntimeMainLoopModel(params: {
   exceeds200kTokens?: boolean
 }): ModelName {
   const { permissionMode, mainLoopModel, exceeds200kTokens = false } = params
+  const usableMainLoopModel = getUsableModelSetting(mainLoopModel)
 
   // opusplan uses Opus in plan mode without [1m] suffix.
   if (
@@ -169,7 +262,7 @@ export function getRuntimeMainLoopModel(params: {
     return getDefaultSonnetModel()
   }
 
-  return mainLoopModel
+  return usableMainLoopModel ?? getDefaultMainLoopModel()
 }
 
 function getActiveProviderDefaultModelSetting(): ModelName | undefined {
@@ -343,7 +436,9 @@ export function firstPartyNameToCanonical(name: ModelName): ModelShortName {
 export function getCanonicalName(fullModelName: ModelName): ModelShortName {
   // Resolve overridden model IDs (e.g. Bedrock ARNs) back to canonical names.
   // resolved is always a 1P-format ID, so firstPartyNameToCanonical can handle it.
-  return firstPartyNameToCanonical(resolveOverriddenModel(fullModelName))
+  return firstPartyNameToCanonical(
+    resolveOverriddenModel(getAnthropicCompatibleModelId(fullModelName)),
+  )
 }
 
 // @[MODEL LAUNCH]: Update the default model description strings shown to users.
@@ -457,6 +552,12 @@ function maskModelCodename(baseName: string): string {
 }
 
 export function renderModelName(model: ModelName): string {
+  const scopedAnthropicCompatibleModel =
+    getAnthropicCompatibleModelDisplay(model)
+  if (scopedAnthropicCompatibleModel) {
+    return scopedAnthropicCompatibleModel
+  }
+
   const publicName = getPublicModelDisplayName(model)
   if (publicName) {
     return publicName
@@ -626,8 +727,31 @@ export function modelDisplayString(model: ModelSetting): string {
     }
     return `Default (${getDefaultMainLoopModel()})`
   }
+  const scopedAnthropicCompatibleModel =
+    getAnthropicCompatibleModelDisplay(model)
+  if (scopedAnthropicCompatibleModel) {
+    return scopedAnthropicCompatibleModel
+  }
   const resolvedModel = parseUserSpecifiedModel(model)
   return model === resolvedModel ? resolvedModel : `${model} (${resolvedModel})`
+}
+
+function getAnthropicCompatibleModelDisplay(
+  model: string,
+): string | undefined {
+  const scoped = parseAnthropicCompatibleModelValue(model)
+  if (!scoped) {
+    return undefined
+  }
+
+  const provider = getGlobalConfig().connectedProviders?.[scoped.providerId]
+  const label =
+    scoped.providerId === 'openrouter'
+      ? 'OpenRouter'
+      : isCustomAnthropicProviderId(scoped.providerId)
+        ? getCustomAnthropicProviderLabel(scoped.providerId, provider)
+        : scoped.providerId
+  return `[${label}] ${scoped.modelId}`
 }
 
 // @[MODEL LAUNCH]: Add a marketing name mapping for the new model below.
@@ -678,5 +802,6 @@ export function getMarketingNameForModel(modelId: string): string | undefined {
 }
 
 export function normalizeModelStringForAPI(model: string): string {
-  return model.replace(/\[(1|2)m\]/gi, '')
+  const usableModel = getUsableModelSetting(model) ?? getDefaultMainLoopModel()
+  return getAnthropicCompatibleModelId(usableModel).replace(/\[(1|2)m\]/gi, '')
 }

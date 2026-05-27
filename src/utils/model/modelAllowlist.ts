@@ -1,4 +1,5 @@
 import { getSettings_DEPRECATED } from '../settings/settings.js'
+import { getAnthropicCompatibleModelId } from '../customAnthropicProviders.js'
 import { isModelAlias, isModelFamilyAlias } from './aliases.js'
 import { parseUserSpecifiedModel } from './model.js'
 import { resolveOverriddenModel } from './modelStrings.js'
@@ -107,7 +108,9 @@ export function isModelAllowed(model: string): boolean {
     return false // Empty allowlist blocks all user-specified models
   }
 
-  const resolvedModel = resolveOverriddenModel(model)
+  const resolvedModel = resolveOverriddenModel(
+    getAnthropicCompatibleModelId(model),
+  )
   const normalizedModel = resolvedModel.trim().toLowerCase()
   const normalizedAllowlist = availableModels.map(m => m.trim().toLowerCase())
 

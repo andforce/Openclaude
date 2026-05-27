@@ -24,6 +24,7 @@ import {
   getDefaultOpusModel,
   getDefaultHaikuModel,
   getMarketingNameForModel,
+  getUsableModelSetting,
   getUserSpecifiedModelSetting,
   isOpus1mMergeEnabled,
   getOpus46PricingSuffix,
@@ -34,9 +35,13 @@ import { has1mContext } from '../context.js'
 import { getGlobalConfig } from '../config.js'
 import { hasConnectedActiveProvider } from '../connectedProviders.js'
 import {
+  createAnthropicCompatibleModelValue,
+  getAnthropicCompatibleModelId,
   getCustomAnthropicModels,
   getCustomAnthropicProvider,
   getCustomAnthropicProviderLabel,
+  isCustomAnthropicProviderId,
+  parseAnthropicCompatibleModelValue,
 } from '../customAnthropicProviders.js'
 import { isCopilotConnected, getCopilotModelsCached } from '../../services/api/copilotClient.js'
 import { isCustomOpenAIConnected, getCustomOpenAIProvider } from '../../services/api/customOpenAIClient.js'
@@ -107,6 +112,63 @@ function getActiveProviderDefaultDescription(): string | undefined {
   }
 }
 
+function getActiveProviderDefaultLabel(): string | undefined {
+  const config = getGlobalConfig()
+  const customAnthropicProvider = getCustomAnthropicProvider(config)
+  if (customAnthropicProvider && config.activeProvider) {
+    const modelId =
+      customAnthropicProvider.defaultModel ??
+      getCustomAnthropicModels(config)?.[0]?.id
+    if (!customAnthropicProvider.baseUrl || !modelId) {
+      return undefined
+    }
+    const label = getCustomAnthropicProviderLabel(
+      config.activeProvider,
+      customAnthropicProvider,
+    )
+    return `[${label}] ${modelId}`
+  }
+
+  switch (config.activeProvider) {
+    case 'kimi-for-coding': {
+      const provider = config.connectedProviders?.['kimi-for-coding']
+      const modelId = provider?.defaultModel ?? config.kimiModelsCache?.[0]?.id
+      if (!provider?.apiKey || !modelId) {
+        return undefined
+      }
+      return `[Kimi] ${modelId}`
+    }
+    case 'github-copilot': {
+      const provider = config.connectedProviders?.['github-copilot']
+      const model = getCopilotModelsCached()[0]
+      if (!provider?.oauthToken || !model) {
+        return undefined
+      }
+      return model.label
+    }
+    case 'openrouter': {
+      const provider = config.connectedProviders?.openrouter
+      const modelId =
+        provider?.defaultModel ?? config.openrouterModelsCache?.[0]?.id
+      if (!provider?.apiKey || !modelId) {
+        return undefined
+      }
+      return `[OpenRouter] ${modelId}`
+    }
+    case 'custom-openai': {
+      const provider = config.connectedProviders?.['custom-openai']
+      const modelId =
+        provider?.defaultModel ?? config.openaiCustomModelsCache?.[0]?.id
+      if (!provider?.baseUrl || !modelId) {
+        return undefined
+      }
+      return `[Custom OpenAI] ${modelId}`
+    }
+    default:
+      return undefined
+  }
+}
+
 export function getDefaultOptionForUser(fastMode = false): ModelOption {
   if (process.env.USER_TYPE === 'ant') {
     const currentModel = renderDefaultModelSetting(
@@ -114,7 +176,7 @@ export function getDefaultOptionForUser(fastMode = false): ModelOption {
     )
     return {
       value: null,
-      label: 'Default (recommended)',
+      label: currentModel,
       description: `Use the default model for Ants (currently ${currentModel})`,
       descriptionForModel: `Default model (currently ${currentModel})`,
     }
@@ -124,7 +186,9 @@ export function getDefaultOptionForUser(fastMode = false): ModelOption {
   if (activeProviderDefaultDescription) {
     return {
       value: null,
-      label: 'Default (recommended)',
+      label:
+        getActiveProviderDefaultLabel() ??
+        renderDefaultModelSetting(getDefaultMainLoopModelSetting()),
       description: activeProviderDefaultDescription,
     }
   }
@@ -133,7 +197,7 @@ export function getDefaultOptionForUser(fastMode = false): ModelOption {
   if (isClaudeAISubscriber()) {
     return {
       value: null,
-      label: 'Default (recommended)',
+      label: renderDefaultModelSetting(getDefaultMainLoopModelSetting()),
       description: getClaudeAiUserDefaultModelDescription(fastMode),
     }
   }
@@ -142,7 +206,7 @@ export function getDefaultOptionForUser(fastMode = false): ModelOption {
   const is3P = getAPIProvider() !== 'firstParty'
   return {
     value: null,
-    label: 'Default (recommended)',
+    label: renderDefaultModelSetting(getDefaultMainLoopModelSetting()),
     description: `Use the default model (currently ${renderDefaultModelSetting(getDefaultMainLoopModelSetting())})${is3P ? '' : ` · ${formatModelPricing(COST_TIER_3_15)}`}`,
   }
 }
@@ -577,22 +641,27 @@ export function getModelOptions(fastMode = false): ModelOption[] {
 
   const openRouterCfg = getGlobalConfig()
   const openRouterProv = openRouterCfg.connectedProviders?.openrouter
-  if (openRouterCfg.activeProvider === 'openrouter' && openRouterProv?.apiKey) {
+  if (openRouterProv?.apiKey) {
     const openRouterModels = openRouterCfg.openrouterModelsCache
     if (openRouterModels && openRouterModels.length > 0) {
       for (const row of openRouterModels) {
-        if (!options.some(existing => existing.value === row.id)) {
+        const value = createAnthropicCompatibleModelValue('openrouter', row.id)
+        if (!options.some(existing => existing.value === value)) {
           options.push({
-            value: row.id,
+            value,
             label: `[OpenRouter] ${row.id}`,
             description: 'OpenRouter Anthropic-compatible API',
           })
         }
       }
     } else if (openRouterProv.defaultModel) {
-      if (!options.some(existing => existing.value === openRouterProv.defaultModel)) {
+      const value = createAnthropicCompatibleModelValue(
+        'openrouter',
+        openRouterProv.defaultModel,
+      )
+      if (!options.some(existing => existing.value === value)) {
         options.push({
-          value: openRouterProv.defaultModel,
+          value,
           label: `[OpenRouter] ${openRouterProv.defaultModel}`,
           description: 'OpenRouter Anthropic-compatible API',
         })
@@ -650,30 +719,33 @@ export function getModelOptions(fastMode = false): ModelOption[] {
     }
   }
 
-  // Custom Anthropic-compatible (models from GET /v1/models at login)
+  // Custom Anthropic-compatible providers (models from GET /v1/models at login)
   const gCfg = getGlobalConfig()
-  const customAnthropicProvider = getCustomAnthropicProvider(gCfg)
-  if (customAnthropicProvider?.baseUrl && gCfg.activeProvider) {
-    const label = getCustomAnthropicProviderLabel(
-      gCfg.activeProvider,
-      customAnthropicProvider,
-    )
-    const cache = getCustomAnthropicModels(gCfg) ?? []
-    for (const row of cache) {
-      if (!options.some(existing => existing.value === row.id)) {
+  for (const [providerId, provider] of Object.entries(
+    gCfg.connectedProviders ?? {},
+  )) {
+    if (!isCustomAnthropicProviderId(providerId) || !provider.baseUrl) {
+      continue
+    }
+
+    const label = getCustomAnthropicProviderLabel(providerId, provider)
+    const cache = getCustomAnthropicModels(gCfg, providerId) ?? []
+    const models =
+      cache.length > 0
+        ? cache
+        : provider.defaultModel
+          ? [{ id: provider.defaultModel }]
+          : []
+
+    for (const row of models) {
+      const value = createAnthropicCompatibleModelValue(providerId, row.id)
+      if (!options.some(existing => existing.value === value)) {
         options.push({
-          value: row.id,
+          value,
           label: `[${label}] ${row.id}`,
-          description: `Anthropic-compatible · ${customAnthropicProvider.baseUrl}`,
+          description: `Anthropic-compatible · ${provider.baseUrl}`,
         })
       }
-    }
-    if (cache.length === 0 && customAnthropicProvider.defaultModel) {
-      options.push({
-        value: customAnthropicProvider.defaultModel,
-        label: `[${label}] ${customAnthropicProvider.defaultModel}`,
-        description: `Anthropic-compatible · ${customAnthropicProvider.baseUrl}`,
-      })
     }
   }
 
@@ -681,26 +753,30 @@ export function getModelOptions(fastMode = false): ModelOption[] {
   // if it is not already in the options.
   let customModel: ModelSetting = null
   const currentMainLoopModel = getUserSpecifiedModelSetting()
-  const initialMainLoopModel = getInitialMainLoopModel()
+  const initialMainLoopModel = getUsableModelSetting(getInitialMainLoopModel())
   if (currentMainLoopModel !== undefined && currentMainLoopModel !== null) {
     customModel = currentMainLoopModel
   } else if (initialMainLoopModel !== null) {
     customModel = initialMainLoopModel
   }
-  if (customModel === null || options.some(opt => opt.value === customModel)) {
-    return filterModelOptionsByAllowlist(options)
+  if (
+    customModel === null ||
+    options.some(opt => opt.value === customModel) ||
+    hasEquivalentProviderModelOption(options, customModel)
+  ) {
+    return finalizeModelOptions(options, customModel)
   } else if (customModel === 'opusplan') {
-    return filterModelOptionsByAllowlist([...options, getOpusPlanOption()])
+    return finalizeModelOptions([...options, getOpusPlanOption()], customModel)
   } else if (customModel === 'opus' && getAPIProvider() === 'firstParty') {
-    return filterModelOptionsByAllowlist([
-      ...options,
-      getMaxOpusOption(fastMode),
-    ])
+    return finalizeModelOptions(
+      [...options, getMaxOpusOption(fastMode)],
+      customModel,
+    )
   } else if (customModel === 'opus[1m]' && getAPIProvider() === 'firstParty') {
-    return filterModelOptionsByAllowlist([
-      ...options,
-      getMergedOpus1MOption(fastMode),
-    ])
+    return finalizeModelOptions(
+      [...options, getMergedOpus1MOption(fastMode)],
+      customModel,
+    )
   } else {
     // Try to show a human-readable label for known Anthropic models, with an
     // upgrade hint if the alias now resolves to a newer version.
@@ -714,13 +790,100 @@ export function getModelOptions(fastMode = false): ModelOption[] {
         description: 'Custom model',
       })
     }
-    return filterModelOptionsByAllowlist(options)
+    return finalizeModelOptions(options, customModel)
   }
+}
+
+function hasEquivalentProviderModelOption(
+  options: ModelOption[],
+  model: string,
+): boolean {
+  const modelId = getAnthropicCompatibleModelId(model)
+  return options.some(
+    option =>
+      option.value !== null &&
+      parseAnthropicCompatibleModelValue(option.value) !== null &&
+      getAnthropicCompatibleModelId(option.value) === modelId,
+  )
+}
+
+function finalizeModelOptions(
+  options: ModelOption[],
+  currentModel: ModelSetting,
+): ModelOption[] {
+  const filteredOptions = filterModelOptionsByAllowlist(options).filter(
+    option => option.value !== null,
+  )
+  const modelForOrdering = currentModel ?? getDefaultMainLoopModelSetting()
+
+  const currentIndex = findCurrentModelOptionIndex(
+    filteredOptions,
+    modelForOrdering,
+  )
+  if (currentIndex <= 0) {
+    return filteredOptions
+  }
+
+  const currentOption = filteredOptions[currentIndex]!
+  return [
+    currentOption,
+    ...filteredOptions.slice(0, currentIndex),
+    ...filteredOptions.slice(currentIndex + 1),
+  ]
+}
+
+function findCurrentModelOptionIndex(
+  options: ModelOption[],
+  currentModel: string,
+): number {
+  const currentModelId = getAnthropicCompatibleModelId(currentModel)
+  const matchingIndexes = options
+    .map((option, index) => ({ option, index }))
+    .filter(
+      ({ option }) =>
+        option.value === currentModel ||
+        (option.value !== null &&
+          getAnthropicCompatibleModelId(option.value) === currentModelId),
+    )
+
+  if (matchingIndexes.length === 0) {
+    return -1
+  }
+
+  if (parseAnthropicCompatibleModelValue(currentModel)) {
+    const exactMatch = matchingIndexes.find(
+      ({ option }) => option.value === currentModel,
+    )
+    if (exactMatch) {
+      return exactMatch.index
+    }
+  }
+
+  const config = getGlobalConfig()
+  const providerDefaultMatch = matchingIndexes.find(({ option }) => {
+    if (option.value === null) {
+      return false
+    }
+    const providerModel = parseAnthropicCompatibleModelValue(option.value)
+    if (!providerModel) {
+      return false
+    }
+    return (
+      config.connectedProviders?.[providerModel.providerId]?.defaultModel ===
+      currentModelId
+    )
+  })
+  if (providerDefaultMatch) {
+    return providerDefaultMatch.index
+  }
+
+  return matchingIndexes[0]!.index
 }
 
 /**
  * Filter model options by the availableModels allowlist.
- * Always preserves the "Default" option (value: null).
+ * Preserves the default option here; the interactive model picker removes
+ * that virtual row later and focuses the concrete active-provider model.
  */
 function filterModelOptionsByAllowlist(options: ModelOption[]): ModelOption[] {
   const settings = getSettings_DEPRECATED() || {}

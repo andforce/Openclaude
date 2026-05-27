@@ -31,7 +31,11 @@ import {
 import { isCopilotModel, createCopilotFetchOverride } from './copilotClient.js'
 import { getGlobalConfig } from '../../utils/config.js'
 import { isCustomOpenAIModel, createCustomOpenAIFetchOverride } from './customOpenAIClient.js'
-import { getCustomAnthropicProvider } from '../../utils/customAnthropicProviders.js'
+import {
+  getCustomAnthropicProvider,
+  isCustomAnthropicProviderId,
+  parseAnthropicCompatibleModelValue,
+} from '../../utils/customAnthropicProviders.js'
 
 /**
  * Environment variables for different client types:
@@ -322,6 +326,48 @@ export async function getAnthropicClient({
   }
 
   const globalCfg = getGlobalConfig()
+  const scopedAnthropicCompatibleModel =
+    parseAnthropicCompatibleModelValue(model)
+
+  if (scopedAnthropicCompatibleModel) {
+    const provider =
+      globalCfg.connectedProviders?.[scopedAnthropicCompatibleModel.providerId]
+    if (
+      scopedAnthropicCompatibleModel.providerId === 'openrouter' &&
+      provider?.apiKey
+    ) {
+      const openRouterConfig: ConstructorParameters<typeof Anthropic>[0] = {
+        apiKey: null,
+        authToken: provider.apiKey,
+        baseURL: provider.baseUrl || 'https://openrouter.ai/api',
+        ...ARGS,
+        ...(isDebugToStdErr() && { logger: createStderrLogger() }),
+      }
+      return new Anthropic(openRouterConfig)
+    }
+
+    if (
+      isCustomAnthropicProviderId(scopedAnthropicCompatibleModel.providerId) &&
+      provider?.baseUrl
+    ) {
+      let anthropicBase = provider.baseUrl.replace(/\/$/, '')
+      if (anthropicBase.endsWith('/v1')) {
+        anthropicBase = anthropicBase.slice(0, -3)
+      }
+      const customAnthropicConfig: ConstructorParameters<typeof Anthropic>[0] =
+        {
+          apiKey: provider.apiKey || 'not-needed',
+          baseURL: anthropicBase,
+          ...ARGS,
+          ...(isDebugToStdErr() && { logger: createStderrLogger() }),
+        }
+      return new Anthropic(customAnthropicConfig)
+    }
+
+    throw new Error(
+      `Anthropic-compatible provider '${scopedAnthropicCompatibleModel.providerId}' is not configured. Run /connect to configure it again.`,
+    )
+  }
 
   // OpenRouter exposes an Anthropic-compatible Messages API under /api.
   const openRouterProvider = globalCfg.connectedProviders?.openrouter

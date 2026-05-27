@@ -8,6 +8,7 @@ import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
 import { toError } from '../utils/errors.js'
 import { logError } from '../utils/log.js'
 import { applyConfigEnvironmentVariables } from '../utils/managedEnv.js'
+import { parseAnthropicCompatibleModelValue } from '../utils/customAnthropicProviders.js'
 import {
   permissionModeFromString,
   toExternalPermissionMode,
@@ -109,6 +110,38 @@ export function onChangeAppState({
     // Save to settings
     updateSettingsForSource('userSettings', { model: newState.mainLoopModel })
     setMainLoopModelOverride(newState.mainLoopModel)
+
+    const providerModel = parseAnthropicCompatibleModelValue(
+      newState.mainLoopModel,
+    )
+    if (providerModel) {
+      const config = getGlobalConfig()
+      const provider = config.connectedProviders?.[providerModel.providerId]
+      if (
+        provider &&
+        (config.activeProvider !== providerModel.providerId ||
+          provider.defaultModel !== providerModel.modelId)
+      ) {
+        saveGlobalConfig(current => {
+          const currentProvider =
+            current.connectedProviders?.[providerModel.providerId]
+          if (!currentProvider) {
+            return current
+          }
+          return {
+            ...current,
+            connectedProviders: {
+              ...(current.connectedProviders || {}),
+              [providerModel.providerId]: {
+                ...currentProvider,
+                defaultModel: providerModel.modelId,
+              },
+            },
+            activeProvider: providerModel.providerId,
+          }
+        })
+      }
+    }
   }
 
   // expandedView → persist as showExpandedTodos + showSpinnerTree for backwards compat
