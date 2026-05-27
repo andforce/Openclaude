@@ -1,5 +1,6 @@
 import type { AppStateStore } from '../../state/AppState.js'
 import { saveGlobalConfig } from '../../utils/config.js'
+import { resolveCustomAnthropicProviderId } from '../../utils/customAnthropicProviders.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isBilledAsExtraUsage } from '../../utils/extraUsage.js'
 import {
@@ -600,23 +601,41 @@ export async function handleTelegramCallback(
 
     saveGlobalConfig(current => ({
       ...current,
-      connectedProviders: {
-        ...(current.connectedProviders || {}),
-        [providerId]: {
-          baseUrl: selection.baseUrl,
-          defaultModel: model,
-          ...(selection.apiKey ? { apiKey: selection.apiKey } : {}),
-          connectedAt: new Date().toISOString(),
-        },
-      },
-      activeProvider: providerId,
-      ...(providerId === 'custom-openai'
-        ? {
-            openaiCustomModelsCache: selection.models.map(id => ({ id })),
-          }
-        : {
-            anthropicCustomModelsCache: selection.models.map(id => ({ id })),
-          }),
+      ...(() => {
+        const savedProviderId =
+          providerId === 'custom-anthropic'
+            ? resolveCustomAnthropicProviderId(current, selection.baseUrl)
+            : providerId
+        return {
+          connectedProviders: {
+            ...(current.connectedProviders || {}),
+            [savedProviderId]: {
+              baseUrl: selection.baseUrl,
+              defaultModel: model,
+              ...(selection.apiKey ? { apiKey: selection.apiKey } : {}),
+              connectedAt: new Date().toISOString(),
+            },
+          },
+          activeProvider: savedProviderId,
+          ...(providerId === 'custom-openai'
+            ? {
+                openaiCustomModelsCache: selection.models.map(id => ({ id })),
+              }
+            : {
+                anthropicCustomModelsCaches: {
+                  ...(current.anthropicCustomModelsCaches || {}),
+                  [savedProviderId]: selection.models.map(id => ({ id })),
+                },
+                ...(savedProviderId === 'custom-anthropic'
+                  ? {
+                      anthropicCustomModelsCache: selection.models.map(id => ({
+                        id,
+                      })),
+                    }
+                  : {}),
+              }),
+        }
+      })(),
     }))
 
     pendingConnectModelMenus.delete(event.chatId)

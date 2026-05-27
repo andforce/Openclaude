@@ -14,6 +14,11 @@ import {
 } from '../../services/api/customOpenAIClient.js'
 import { Spinner } from '../../components/Spinner.js'
 import { SearchableModelSelect } from '../../components/SearchableModelSelect.js'
+import {
+  getCustomAnthropicProviderLabel,
+  isCustomAnthropicProviderId,
+  resolveCustomAnthropicProviderId,
+} from '../../utils/customAnthropicProviders.js'
 
 const COPILOT_CLIENT_ID = 'Ov23li8tweQw6odWQebz'
 const COPILOT_DEVICE_CODE_URL = 'https://github.com/login/device/code'
@@ -370,8 +375,11 @@ function SuccessDialog({
       ? 'GitHub Copilot'
       : providerId === 'custom-openai'
         ? 'Custom OpenAI-compatible API'
-        : providerId === 'custom-anthropic'
-          ? 'Custom Anthropic-compatible API'
+        : isCustomAnthropicProviderId(providerId)
+          ? getCustomAnthropicProviderLabel(
+              providerId,
+              getGlobalConfig().connectedProviders?.[providerId],
+            )
           : PROVIDER_CONFIG[providerId]?.name ?? providerId
 
   return (
@@ -1374,20 +1382,45 @@ function ConnectDialog({
             onSelect={modelId => {
               saveGlobalConfig(current => ({
                 ...current,
-                connectedProviders: {
-                  ...(current.connectedProviders || {}),
-                  'custom-anthropic': {
-                    baseUrl: st.baseUrl || '',
-                    defaultModel: modelId,
-                    ...(st.apiKey ? { apiKey: st.apiKey } : {}),
-                    connectedAt: new Date().toISOString(),
-                  },
-                },
-                activeProvider: 'custom-anthropic',
-                anthropicCustomModelsCache: st.models.map(id => ({ id })),
+                ...(() => {
+                  const providerId = resolveCustomAnthropicProviderId(
+                    current,
+                    st.baseUrl || '',
+                  )
+                  return {
+                    connectedProviders: {
+                      ...(current.connectedProviders || {}),
+                      [providerId]: {
+                        baseUrl: st.baseUrl || '',
+                        defaultModel: modelId,
+                        ...(st.apiKey ? { apiKey: st.apiKey } : {}),
+                        connectedAt: new Date().toISOString(),
+                      },
+                    },
+                    activeProvider: providerId,
+                    anthropicCustomModelsCaches: {
+                      ...(current.anthropicCustomModelsCaches || {}),
+                      [providerId]: st.models.map(id => ({ id })),
+                    },
+                    ...(providerId === 'custom-anthropic'
+                      ? {
+                          anthropicCustomModelsCache: st.models.map(id => ({
+                            id,
+                          })),
+                        }
+                      : {}),
+                  }
+                })(),
               }))
               onChangeAPIKey()
-              setStep({ type: 'success', providerId: 'custom-anthropic' })
+              const providerId = resolveCustomAnthropicProviderId(
+                getGlobalConfig(),
+                st.baseUrl || '',
+              )
+              setStep({
+                type: 'success',
+                providerId,
+              })
             }}
             onCancel={handleCancel}
           />

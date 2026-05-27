@@ -30,6 +30,10 @@ import { type ModelAlias, isModelAlias } from './aliases.js'
 import { capitalize } from '../stringUtils.js'
 import { getGlobalConfig } from '../config.js'
 import { getCopilotModelsCached } from '../../services/api/copilotClient.js'
+import {
+  getCustomAnthropicModels,
+  getCustomAnthropicProvider,
+} from '../customAnthropicProviders.js'
 
 export type ModelShortName = string
 export type ModelName = string
@@ -170,6 +174,16 @@ export function getRuntimeMainLoopModel(params: {
 
 function getActiveProviderDefaultModelSetting(): ModelName | undefined {
   const config = getGlobalConfig()
+  const customAnthropicProvider = getCustomAnthropicProvider(config)
+  if (customAnthropicProvider) {
+    const modelId =
+      customAnthropicProvider.defaultModel ??
+      getCustomAnthropicModels(config)?.[0]?.id
+    if (!customAnthropicProvider.baseUrl || !modelId) {
+      return undefined
+    }
+    return modelId
+  }
 
   switch (config.activeProvider) {
     case 'kimi-for-coding': {
@@ -204,15 +218,6 @@ function getActiveProviderDefaultModelSetting(): ModelName | undefined {
         return undefined
       }
       return `custom-openai:${modelId}`
-    }
-    case 'custom-anthropic': {
-      const provider = config.connectedProviders?.['custom-anthropic']
-      const modelId =
-        provider?.defaultModel ?? config.anthropicCustomModelsCache?.[0]?.id
-      if (!provider?.baseUrl || !modelId) {
-        return undefined
-      }
-      return modelId
     }
     default:
       return undefined

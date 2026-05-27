@@ -33,6 +33,11 @@ import {
 import { has1mContext } from '../context.js'
 import { getGlobalConfig } from '../config.js'
 import { hasConnectedActiveProvider } from '../connectedProviders.js'
+import {
+  getCustomAnthropicModels,
+  getCustomAnthropicProvider,
+  getCustomAnthropicProviderLabel,
+} from '../customAnthropicProviders.js'
 import { isCopilotConnected, getCopilotModelsCached } from '../../services/api/copilotClient.js'
 import { isCustomOpenAIConnected, getCustomOpenAIProvider } from '../../services/api/customOpenAIClient.js'
 
@@ -47,6 +52,20 @@ export type ModelOption = {
 
 function getActiveProviderDefaultDescription(): string | undefined {
   const config = getGlobalConfig()
+  const customAnthropicProvider = getCustomAnthropicProvider(config)
+  if (customAnthropicProvider && config.activeProvider) {
+    const modelId =
+      customAnthropicProvider.defaultModel ??
+      getCustomAnthropicModels(config)?.[0]?.id
+    if (!customAnthropicProvider.baseUrl || !modelId) {
+      return undefined
+    }
+    const label = getCustomAnthropicProviderLabel(
+      config.activeProvider,
+      customAnthropicProvider,
+    )
+    return `Use the active provider's default model (currently [${label}] ${modelId})`
+  }
 
   switch (config.activeProvider) {
     case 'kimi-for-coding': {
@@ -82,15 +101,6 @@ function getActiveProviderDefaultDescription(): string | undefined {
         return undefined
       }
       return `Use the active provider's default model (currently [Custom OpenAI] ${modelId})`
-    }
-    case 'custom-anthropic': {
-      const provider = config.connectedProviders?.['custom-anthropic']
-      const modelId =
-        provider?.defaultModel ?? config.anthropicCustomModelsCache?.[0]?.id
-      if (!provider?.baseUrl || !modelId) {
-        return undefined
-      }
-      return `Use the active provider's default model (currently [Custom Anthropic] ${modelId})`
     }
     default:
       return undefined
@@ -642,20 +652,28 @@ export function getModelOptions(fastMode = false): ModelOption[] {
 
   // Custom Anthropic-compatible (models from GET /v1/models at login)
   const gCfg = getGlobalConfig()
-  if (
-    gCfg.activeProvider === 'custom-anthropic' &&
-    gCfg.connectedProviders?.['custom-anthropic']?.baseUrl
-  ) {
-    const base = gCfg.connectedProviders?.['custom-anthropic']?.baseUrl
-    const cache = gCfg.anthropicCustomModelsCache
-    for (const row of cache ?? []) {
+  const customAnthropicProvider = getCustomAnthropicProvider(gCfg)
+  if (customAnthropicProvider?.baseUrl && gCfg.activeProvider) {
+    const label = getCustomAnthropicProviderLabel(
+      gCfg.activeProvider,
+      customAnthropicProvider,
+    )
+    const cache = getCustomAnthropicModels(gCfg) ?? []
+    for (const row of cache) {
       if (!options.some(existing => existing.value === row.id)) {
         options.push({
           value: row.id,
-          label: `[Custom Anthropic] ${row.id}`,
-          description: base ? `Anthropic-compatible · ${base}` : 'Anthropic-compatible custom API',
+          label: `[${label}] ${row.id}`,
+          description: `Anthropic-compatible · ${customAnthropicProvider.baseUrl}`,
         })
       }
+    }
+    if (cache.length === 0 && customAnthropicProvider.defaultModel) {
+      options.push({
+        value: customAnthropicProvider.defaultModel,
+        label: `[${label}] ${customAnthropicProvider.defaultModel}`,
+        description: `Anthropic-compatible · ${customAnthropicProvider.baseUrl}`,
+      })
     }
   }
 

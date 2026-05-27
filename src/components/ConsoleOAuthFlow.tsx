@@ -14,6 +14,7 @@ import { getOauthAccountInfo, validateForceLoginOrg } from '../utils/auth.js';
 import { logError } from '../utils/log.js';
 import { getSettings_DEPRECATED } from '../utils/settings/settings.js';
 import { saveGlobalConfig } from '../utils/config.js';
+import { resolveCustomAnthropicProviderId } from '../utils/customAnthropicProviders.js';
 import { fetchCopilotModels } from '../services/api/copilotClient.js';
 import { fetchOpenAICompatibleModelIds, fetchAnthropicCompatibleModelIds, fetchOpenRouterAnthropicModelIds } from '../services/api/customOpenAIClient.js';
 import { Select } from './CustomSelect/select.js';
@@ -1331,21 +1332,34 @@ function OAuthStatusMessage(t0) {
             }} onSelect={modelId => {
               saveGlobalConfig(current => ({
                 ...current,
-                connectedProviders: {
-                  ...(current.connectedProviders || {}),
-                  "custom-anthropic": {
-                    baseUrl: st.baseUrl || "",
-                    defaultModel: modelId,
-                    ...(st.apiKey ? {
-                      apiKey: st.apiKey
-                    } : {}),
-                    connectedAt: new Date().toISOString()
-                  }
-                },
-                activeProvider: "custom-anthropic",
-                anthropicCustomModelsCache: st.models.map(id => ({
-                  id
-                }))
+                ...(() => {
+                  const providerId = resolveCustomAnthropicProviderId(current, st.baseUrl || "");
+                  return {
+                    connectedProviders: {
+                      ...(current.connectedProviders || {}),
+                      [providerId]: {
+                        baseUrl: st.baseUrl || "",
+                        defaultModel: modelId,
+                        ...(st.apiKey ? {
+                          apiKey: st.apiKey
+                        } : {}),
+                        connectedAt: new Date().toISOString()
+                      }
+                    },
+                    activeProvider: providerId,
+                    anthropicCustomModelsCaches: {
+                      ...(current.anthropicCustomModelsCaches || {}),
+                      [providerId]: st.models.map(id => ({
+                        id
+                      }))
+                    },
+                    ...(providerId === "custom-anthropic" ? {
+                      anthropicCustomModelsCache: st.models.map(id => ({
+                        id
+                      }))
+                    } : {})
+                  };
+                })()
               }));
               setOAuthStatus({
                 state: "success"

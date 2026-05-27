@@ -31,6 +31,7 @@ import {
 import { isCopilotModel, createCopilotFetchOverride } from './copilotClient.js'
 import { getGlobalConfig } from '../../utils/config.js'
 import { isCustomOpenAIModel, createCustomOpenAIFetchOverride } from './customOpenAIClient.js'
+import { getCustomAnthropicProvider } from '../../utils/customAnthropicProviders.js'
 
 /**
  * Environment variables for different client types:
@@ -336,8 +337,8 @@ export async function getAnthropicClient({
   }
 
   // Custom Anthropic-compatible API (self-hosted / LAN; API key optional)
-  const customAnthropicProvider = globalCfg.connectedProviders?.['custom-anthropic']
-  if (globalCfg.activeProvider === 'custom-anthropic' && customAnthropicProvider?.baseUrl) {
+  const customAnthropicProvider = getCustomAnthropicProvider(globalCfg)
+  if (customAnthropicProvider?.baseUrl) {
     let anthropicBase = customAnthropicProvider.baseUrl.replace(/\/$/, '')
     if (anthropicBase.endsWith('/v1')) {
       anthropicBase = anthropicBase.slice(0, -3)

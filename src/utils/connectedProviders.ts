@@ -3,11 +3,16 @@ import {
   type ConnectedProviderInfo,
   type GlobalConfig,
 } from './config.js'
+import { isCustomAnthropicProviderId } from './customAnthropicProviders.js'
 
 function hasRequiredProviderFields(
   providerId: string,
   provider: ConnectedProviderInfo | undefined,
 ): boolean {
+  if (isCustomAnthropicProviderId(providerId)) {
+    return !!provider?.baseUrl
+  }
+
   switch (providerId) {
     case 'github-copilot':
       return !!provider?.oauthToken
@@ -15,7 +20,6 @@ function hasRequiredProviderFields(
     case 'kimi-for-coding':
       return !!provider?.apiKey
     case 'custom-openai':
-    case 'custom-anthropic':
       return !!provider?.baseUrl
     default:
       return !!(

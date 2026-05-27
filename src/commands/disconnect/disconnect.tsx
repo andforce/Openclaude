@@ -19,6 +19,11 @@ import {
   saveGlobalConfig,
   type ConnectedProviderInfo,
 } from '../../utils/config.js'
+import {
+  CUSTOM_ANTHROPIC_PROVIDER_ID,
+  getCustomAnthropicProviderLabel,
+  isCustomAnthropicProviderId,
+} from '../../utils/customAnthropicProviders.js'
 import { stripSignatureBlocks } from '../../utils/messages.js'
 import {
   checkAndDisableAutoModeIfNeeded,
@@ -58,6 +63,13 @@ type DisconnectStep =
   | { type: 'error'; error: string }
 
 function getProviderLabel(providerId: string): string {
+  if (isCustomAnthropicProviderId(providerId)) {
+    return getCustomAnthropicProviderLabel(
+      providerId,
+      getGlobalConfig().connectedProviders?.[providerId],
+    )
+  }
+
   return PROVIDER_LABELS[providerId] ?? providerId
 }
 
@@ -237,6 +249,21 @@ function DisconnectDialog({
         const remainingProviderIds = Object.keys(rest)
         hasRemainingProviders = remainingProviderIds.length > 0
 
+        let anthropicCustomModelsCaches = current.anthropicCustomModelsCaches
+        if (
+          isCustomAnthropicProviderId(step.provider.providerId) &&
+          current.anthropicCustomModelsCaches
+        ) {
+          const {
+            [step.provider.providerId]: _removedCache,
+            ...remainingCaches
+          } = current.anthropicCustomModelsCaches
+          anthropicCustomModelsCaches =
+            Object.keys(remainingCaches).length > 0
+              ? remainingCaches
+              : undefined
+        }
+
         return {
           ...current,
           connectedProviders:
@@ -254,8 +281,13 @@ function DisconnectDialog({
           ...(step.provider.providerId === 'custom-openai'
             ? { openaiCustomModelsCache: undefined }
             : {}),
-          ...(step.provider.providerId === 'custom-anthropic'
-            ? { anthropicCustomModelsCache: undefined }
+          ...(isCustomAnthropicProviderId(step.provider.providerId)
+            ? {
+                anthropicCustomModelsCaches,
+                ...(step.provider.providerId === CUSTOM_ANTHROPIC_PROVIDER_ID
+                  ? { anthropicCustomModelsCache: undefined }
+                  : {}),
+              }
             : {}),
         }
       })

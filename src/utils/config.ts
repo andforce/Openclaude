@@ -610,8 +610,10 @@ export type GlobalConfig = {
   /** From GET /v1/models after Custom OpenAI-compatible login */
   openaiCustomModelsCache?: Array<{ id: string }>
 
-  /** From GET /v1/models after Custom Anthropic-compatible login */
+  /** @deprecated Legacy single Custom Anthropic-compatible cache. Use anthropicCustomModelsCaches. */
   anthropicCustomModelsCache?: Array<{ id: string }>
+  /** From GET /v1/models after Custom Anthropic-compatible login, keyed by provider id. */
+  anthropicCustomModelsCaches?: Record<string, Array<{ id: string }>>
 }
 
 export type ConnectedProviderInfo = {
