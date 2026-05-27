@@ -38,6 +38,36 @@ OpenClaude 默认将运行时配置、会话、插件、缓存等数据写入 `~
 export OPENCLAUDE_CONFIG_DIR="$HOME/.config/openclaude"
 ```
 
+## 调试 API 请求日志
+
+排查模型提供方、Base URL 或 `/model` 切换是否生效时，可以打开 debug 日志并过滤 API 请求行。
+
+安装版：
+
+```bash
+openclaude --debug-file /tmp/openclaude-debug.log
+```
+
+源码调试版：
+
+```bash
+./run-dev.sh -- --debug-file /tmp/openclaude-debug.log
+```
+
+另开一个终端查看请求：
+
+```bash
+tail -f /tmp/openclaude-debug.log | rg "API REQUEST|API:request|Anthropic SDK"
+```
+
+`API REQUEST` 日志会打印完整请求 URL，便于确认实际请求到了哪个提供方：
+
+```text
+[API REQUEST] https://example.com/anthropic/v1/messages x-client-request-id=... source=repl_main_thread
+```
+
+其中 `source=repl_main_thread` 是主对话请求；`generate_session_title` 等来源通常是后台标题生成或辅助请求。
+
 ## 斜杠命令（节选）
 
 在 REPL 中可使用以下命令（完整列表以程序内 `/help` 为准）。
