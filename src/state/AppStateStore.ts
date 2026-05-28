@@ -477,6 +477,16 @@ export type AppState = DeepImmutable<{
 
 export type AppStateStore = Store<AppState>
 
+let currentAppStateStore: AppStateStore | null = null
+
+export function setCurrentAppStateStore(store: AppStateStore | null): void {
+  currentAppStateStore = store
+}
+
+export function getAppState(): AppState {
+  return currentAppStateStore?.getState() ?? getDefaultAppState()
+}
+
 export function getDefaultAppState(): AppState {
   // Determine initial permission mode for teammates spawned with plan_mode_required
   // Use lazy require to avoid circular dependency with teammate.ts

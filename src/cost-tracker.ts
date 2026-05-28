@@ -47,6 +47,7 @@ import type { FpsMetrics } from './utils/fpsTracker.js'
 import { getCanonicalName } from './utils/model/model.js'
 import { calculateUSDCost } from './utils/modelCost.js'
 export {
+  getTotalCostUSD,
   getTotalCostUSD as getTotalCost,
   getTotalDuration,
   getTotalAPIDuration,
