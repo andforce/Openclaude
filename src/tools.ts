@@ -12,6 +12,8 @@ import { NotebookEditTool } from './tools/NotebookEditTool/NotebookEditTool.js'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool.js'
 import { TaskStopTool } from './tools/TaskStopTool/TaskStopTool.js'
 import { BriefTool } from './tools/BriefTool/BriefTool.js'
+import { GoalCreateTool } from './tools/GoalCreateTool/GoalCreateTool.js'
+import { GoalGetTool } from './tools/GoalGetTool/GoalGetTool.js'
 import { GoalUpdateTool } from './tools/GoalUpdateTool/GoalUpdateTool.js'
 import { getAppState } from './state/AppState.js'
 // Dead code elimination: conditional import for ant-only tools
@@ -240,7 +242,9 @@ export function getAllBaseTools(): Tools {
     ...(RemoteTriggerTool ? [RemoteTriggerTool] : []),
     ...(MonitorTool ? [MonitorTool] : []),
     BriefTool,
-    ...(getAppState().goal?.status === 'pursuing' ? [GoalUpdateTool] : []),
+    ...(getAppState().goal?.status === 'pursuing' || getAppState().goal?.status === 'paused' ? [GoalUpdateTool] : []),
+    GoalCreateTool,
+    GoalGetTool,
     ...(SendUserFileTool ? [SendUserFileTool] : []),
     ...(PushNotificationTool ? [PushNotificationTool] : []),
     ...(SubscribePRTool ? [SubscribePRTool] : []),

@@ -4,17 +4,17 @@ import { Text } from '../../ink.js'
 import type { Output } from './GoalUpdateTool.js'
 
 export function renderToolUseMessage(input: {
-  status?: 'achieved' | 'unmet'
+  status?: 'complete' | 'blocked'
 }): React.ReactNode {
-  const verb = input.status === 'unmet' ? 'unmet' : 'achieved'
-  return <Text dimColor>marking goal {verb}…</Text>
+  const verb = input.status === 'blocked' ? 'blocked' : 'complete'
+  return <Text dimColor>marking goal {verb}...</Text>
 }
 
 export function renderToolResultMessage(output: Output): React.ReactNode {
   const color =
-    output.status === 'achieved'
+    output.status === 'complete'
       ? 'green'
-      : output.status === 'unmet'
+      : output.status === 'blocked'
         ? 'yellow'
         : 'gray'
   const label =

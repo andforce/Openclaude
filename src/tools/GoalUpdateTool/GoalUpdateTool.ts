@@ -4,8 +4,8 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import {
   DESCRIPTION,
-  GOAL_UPDATE_TOOL_NAME,
-  GOAL_UPDATE_TOOL_PROMPT,
+  UPDATE_GOAL_TOOL_NAME,
+  UPDATE_GOAL_TOOL_PROMPT,
 } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
 
@@ -14,11 +14,13 @@ const inputSchema = lazySchema(() =>
     goal_id: z
       .string()
       .min(1)
-      .describe('The active goal id from the latest /goal continuation prompt.'),
-    status: z
-      .enum(['achieved', 'unmet'])
       .describe(
-        "'achieved' if the goal is complete; 'unmet' if blocked or impossible.",
+        'The active goal id from the latest goal continuation prompt.',
+      ),
+    status: z
+      .enum(['complete', 'blocked'])
+      .describe(
+        "'complete' if the goal is fully achieved with no required work remaining; 'blocked' only when the same blocking condition has repeated for 3+ consecutive goal turns.",
       ),
     reason: z
       .string()
@@ -31,7 +33,7 @@ type InputSchema = ReturnType<typeof inputSchema>
 
 const outputSchema = lazySchema(() =>
   z.object({
-    status: z.enum(['achieved', 'unmet', 'no-active-goal', 'stale-goal']),
+    status: z.enum(['complete', 'blocked', 'no-active-goal', 'stale-goal']),
     reason: z.string(),
     message: z.string(),
   }),
@@ -41,10 +43,10 @@ type OutputSchema = ReturnType<typeof outputSchema>
 export type Output = z.infer<OutputSchema>
 
 export const GoalUpdateTool = buildTool({
-  name: GOAL_UPDATE_TOOL_NAME,
-  searchHint: 'declare /goal outcome — achieved or unmet',
+  name: UPDATE_GOAL_TOOL_NAME,
+  searchHint: 'declare goal outcome — complete or blocked',
   maxResultSizeChars: 4_000,
-  userFacingName: () => 'Goal Update',
+  userFacingName: () => 'Update Goal',
   get inputSchema(): InputSchema {
     return inputSchema()
   },
@@ -64,7 +66,7 @@ export const GoalUpdateTool = buildTool({
     return DESCRIPTION
   },
   async prompt() {
-    return GOAL_UPDATE_TOOL_PROMPT
+    return UPDATE_GOAL_TOOL_PROMPT
   },
   mapToolResultToToolResultBlockParam(output, toolUseID) {
     return {
@@ -77,7 +79,10 @@ export const GoalUpdateTool = buildTool({
   renderToolResultMessage,
   async call({ goal_id, status, reason }, { getAppState, setAppState }) {
     const goal = getAppState().goal
-    if (!goal || (goal.status !== 'pursuing' && goal.status !== 'paused')) {
+    if (
+      !goal ||
+      (goal.status !== 'pursuing' && goal.status !== 'paused')
+    ) {
       return {
         data: {
           status: 'no-active-goal' as const,
@@ -96,8 +101,16 @@ export const GoalUpdateTool = buildTool({
         },
       }
     }
+
     const now = Date.now()
     let updated = false
+
+    // Map model-facing status to internal GoalStatus
+    const internalStatus =
+      status === 'complete'
+        ? ('achieved' as const)
+        : ('blocked' as const)
+
     setAppState(prev => {
       const current = prev.goal
       if (
@@ -112,12 +125,13 @@ export const GoalUpdateTool = buildTool({
         ...prev,
         goal: {
           ...current,
-          status,
+          status: internalStatus,
           lastReason: reason,
           lastUpdatedAt: now,
         },
       }
     })
+
     if (!updated) {
       return {
         data: {
@@ -128,6 +142,7 @@ export const GoalUpdateTool = buildTool({
         },
       }
     }
+
     return {
       data: {
         status,

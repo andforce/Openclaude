@@ -717,6 +717,10 @@ export function getTotalCacheCreationInputTokens(): number {
   return sumBy(Object.values(STATE.modelUsage), 'cacheCreationInputTokens')
 }
 
+export function getTotalTokensUsed(): number {
+  return getTotalInputTokens() + getTotalOutputTokens()
+}
+
 export function getTotalWebSearchRequests(): number {
   return sumBy(Object.values(STATE.modelUsage), 'webSearchRequests')
 }

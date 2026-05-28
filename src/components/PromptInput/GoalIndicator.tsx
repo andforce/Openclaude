@@ -13,10 +13,12 @@ function statusColor(status: GoalStatus): string {
       return 'yellow'
     case 'achieved':
       return 'cyan'
-    case 'unmet':
+    case 'blocked':
+      return 'red'
+    case 'usage-limited':
       return 'gray'
     case 'budget-limited':
-      return 'red'
+      return 'magenta'
   }
 }
 

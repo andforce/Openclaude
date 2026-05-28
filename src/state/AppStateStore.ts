@@ -90,7 +90,8 @@ export type GoalStatus =
   | 'pursuing'
   | 'paused'
   | 'achieved'
-  | 'unmet'
+  | 'blocked'
+  | 'usage-limited'
   | 'budget-limited'
 
 export type Goal = {
@@ -99,9 +100,8 @@ export type Goal = {
   status: GoalStatus
   startedAt: number
   startCostUSD: number
+  startTokensUsed: number
   continuationCount: number
-  budgetUSD?: number
-  budgetDurationMs?: number
   lastReason?: string
   lastUpdatedAt: number
 }
