@@ -414,7 +414,13 @@ export function createCustomOpenAIFetchOverride(
           }
           finish_reason: string
         }>
-        usage?: { prompt_tokens: number; completion_tokens: number }
+        usage?: {
+          prompt_tokens: number
+          completion_tokens: number
+          prompt_cache_hit_tokens?: number
+          prompt_cache_miss_tokens?: number
+          prompt_tokens_details?: { cached_tokens?: number }
+        }
       }
 
       const choice = data.choices[0]
@@ -447,6 +453,17 @@ export function createCustomOpenAIFetchOverride(
         }
       }
 
+      // DeepSeek's disk cache is automatic and reports the hit portion (billed
+      // cheaper). Map hit -> cache_read_input_tokens and the rest -> input_tokens
+      // so the existing cost/usage tracking reflects the cache discount.
+      const promptTokens = data.usage?.prompt_tokens || 0
+      const cacheHit =
+        data.usage?.prompt_cache_hit_tokens ??
+        data.usage?.prompt_tokens_details?.cached_tokens ??
+        0
+      const inputTokens =
+        data.usage?.prompt_cache_miss_tokens ?? Math.max(0, promptTokens - cacheHit)
+
       const anthropicResponse = {
         id: data.id || `msg_custom_openai_${Date.now()}`,
         type: 'message',
@@ -455,8 +472,9 @@ export function createCustomOpenAIFetchOverride(
         model: openaiModelId,
         stop_reason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
         usage: {
-          input_tokens: data.usage?.prompt_tokens || 0,
+          input_tokens: inputTokens,
           output_tokens: data.usage?.completion_tokens || 0,
+          ...(cacheHit > 0 ? { cache_read_input_tokens: cacheHit } : {}),
         },
       }
 

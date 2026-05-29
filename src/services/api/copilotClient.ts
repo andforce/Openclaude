@@ -1027,6 +1027,12 @@ export function convertOpenAIStreamToAnthropic(
   let contentIndex = 0
   let hasStartedText = false
   let totalOutputTokens = 0
+  // Input / KV-cache usage from the final chunk. DeepSeek's disk cache is
+  // automatic; it reports `prompt_cache_hit_tokens` (billed cheaper). Map the
+  // hit portion to Anthropic `cache_read_input_tokens` and the rest to
+  // `input_tokens` so the existing cost/usage tracking applies the discount.
+  let inputTokens = 0
+  let cacheReadTokens = 0
   const messageId = `msg_copilot_${Date.now()}`
   const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
   let sentMessageStart = false
@@ -1052,6 +1058,16 @@ export function convertOpenAIStreamToAnthropic(
           reasoningStopped = true
           emitEvent({ type: 'content_block_stop', index: 0 })
         }
+      }
+
+      // Built once at stream end. message_start reported zeros for input/cache;
+      // updateUsage() only overwrites those fields when > 0, so emitting them
+      // here populates the real values (DeepSeek sends usage in the last chunk).
+      function finalUsage(): Record<string, number> {
+        const u: Record<string, number> = { output_tokens: totalOutputTokens }
+        if (inputTokens > 0) u.input_tokens = inputTokens
+        if (cacheReadTokens > 0) u.cache_read_input_tokens = cacheReadTokens
+        return u
       }
 
       try {
@@ -1081,7 +1097,7 @@ export function convertOpenAIStreamToAnthropic(
               emitEvent({
                 type: 'message_delta',
                 delta: { stop_reason: toolCalls.size > 0 ? 'tool_use' : 'end_turn' },
-                usage: { output_tokens: totalOutputTokens },
+                usage: finalUsage(),
               })
               emitEvent({ type: 'message_stop' })
               controller.close()
@@ -1110,9 +1126,28 @@ export function convertOpenAIStreamToAnthropic(
               })
             }
 
-            const usage = chunk.usage as { completion_tokens?: number } | undefined
+            const usage = chunk.usage as
+              | {
+                  completion_tokens?: number
+                  prompt_tokens?: number
+                  prompt_cache_hit_tokens?: number
+                  prompt_cache_miss_tokens?: number
+                  prompt_tokens_details?: { cached_tokens?: number }
+                }
+              | undefined
             if (usage?.completion_tokens) {
               totalOutputTokens = usage.completion_tokens
+            }
+            if (usage?.prompt_tokens != null) {
+              const hit =
+                usage.prompt_cache_hit_tokens ??
+                usage.prompt_tokens_details?.cached_tokens ??
+                0
+              cacheReadTokens = hit
+              // input_tokens (Anthropic) = the non-cached portion of the input.
+              inputTokens =
+                usage.prompt_cache_miss_tokens ??
+                Math.max(0, usage.prompt_tokens - hit)
             }
 
             const choices = chunk.choices as Array<{
@@ -1241,7 +1276,7 @@ export function convertOpenAIStreamToAnthropic(
                 delta: {
                   stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
                 },
-                usage: { output_tokens: totalOutputTokens },
+                usage: finalUsage(),
               })
               emitEvent({ type: 'message_stop' })
               controller.close()
@@ -1266,7 +1301,7 @@ export function convertOpenAIStreamToAnthropic(
         emitEvent({
           type: 'message_delta',
           delta: { stop_reason: 'end_turn' },
-          usage: { output_tokens: totalOutputTokens },
+          usage: finalUsage(),
         })
         emitEvent({ type: 'message_stop' })
         controller.close()
