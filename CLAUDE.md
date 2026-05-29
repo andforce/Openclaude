@@ -4,28 +4,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a reconstructed source of Claude Code CLI (v2.1.88), restored from the `@anthropic-ai/claude-code` npm package source map. The codebase is a TypeScript/React terminal application built with Bun.
+This is **OpenClaude** (v2.1.88) — an independent, rebranded fork of the Claude Code CLI, reconstructed from the `@anthropic-ai/claude-code` npm package source map. The codebase is a TypeScript/React terminal application built with Bun. The shipped binary is `openclaude`, and it stores runtime data (config, sessions, plugins, cache, teams) under `~/.openclaude` by default (override with `OPENCLAUDE_CONFIG_DIR`). README.md is in Chinese and documents the end-user install flow (`install.sh`).
 
 ## Build System
 
-**Build Tool:** Bun v1.3.11+ (required for `bun:bundle` feature API)
+**Build Tool:** Bun v1.3.11 (pinned; required for the `bun:bundle` `feature()` API used for dead-code elimination)
 
-**Package Manager:** pnpm
+**Package Manager:** pnpm (`node_modules` is committed, so install is optional)
 
 ### Common Commands
 
 ```bash
-# Build the project
-bun run build.ts
+# Build the project (package.json pins the Bun version via npx)
+npx --yes bun@1.3.11 run build.ts   # or: pnpm build
 
-# Run the CLI
-bun dist/cli.js --version
+# Run the built CLI
+npx --yes bun@1.3.11 dist/cli.js --version   # or: pnpm start
 
-# Development mode (run without building)
-bun src/entrypoints/cli.tsx
+# Dev / debug workflow — builds then runs dist/cli.js under Node (the recommended path)
+./run-dev.sh -- --version
+./run-dev.sh --no-build -- --help     # skip rebuild
+./run-dev.sh --inspect -- -p "hi"     # launch under the Node inspector (port 9229)
 
-# Install dependencies (optional, node_modules included)
+# Install dependencies (optional, node_modules is committed)
 pnpm install --registry https://registry.npmjs.org
+```
+
+> **Do not run `src/entrypoints/cli.tsx` directly.** Per `run-dev.sh`, the source does not run reliably without the build step because `MACRO` constants and feature flags are only injected at bundle time. Always build first (or use `run-dev.sh`, which builds for you).
+
+### Debug Logging
+
+To trace model provider / base URL / `/model` switching, write a debug log and tail the API request lines:
+
+```bash
+./run-dev.sh -- --debug-file /tmp/oc-debug.log
+tail -f /tmp/oc-debug.log | rg "API REQUEST|API:request|Anthropic SDK"
 ```
 
 ### Build Configuration
@@ -60,23 +73,23 @@ The build is configured in `build.ts`:
 ```
 src/
 ├── entrypoints/     # Application entry points (cli.tsx, etc.)
-├── commands/        # Slash commands (~103 files)
-├── components/      # Terminal UI React components (~389 files)
+├── commands/        # Slash commands (~220 files)
+├── components/      # Terminal UI React components (~394 files)
 │   ├── design-system/  # UI primitives
 │   ├── messages/       # Message rendering
 │   └── permissions/    # Permission dialogs
-├── tools/           # Tool implementations (~184 tools)
+├── tools/           # Tool implementations (~200 tools)
 │   ├── AgentTool/      # Subagent spawning
 │   ├── BashTool/       # Shell execution
 │   ├── File*Tool/      # File operations
 │   └── ...
-├── services/        # Core business logic (~130 files)
+├── services/        # Core business logic (~140 files)
 │   ├── mcp/            # MCP (Model Context Protocol)
 │   ├── api/            # API clients
 │   └── analytics/      # Telemetry/GrowthBook
-├── utils/           # Utility functions (~564 files)
-├── hooks/           # Lifecycle hooks (~104 files)
-├── ink/             # Custom terminal rendering engine (~96 files)
+├── utils/           # Utility functions (~570 files)
+├── hooks/           # Lifecycle hooks (~106 files)
+├── ink/             # Custom terminal rendering engine (~98 files)
 ├── types/           # Shared TypeScript types
 └── vendor/          # Internal vendor code
 ```
@@ -124,7 +137,7 @@ The following internal Anthropic packages are stubbed (not on public npm):
 
 ### Commander.js Patch
 
-The build requires a patched `node_modules/commander/lib/option.js` to support multi-character short options (e.g., `-d2e`). The regex `/^-[^-]$/` is changed to `/^-[^-]+$/`.
+Multi-character short options (e.g., `-d2e`) require patching `node_modules/commander/lib/option.js`: change the regex `/^-[^-]$/` (around line 332) to `/^-[^-]+$/`. Note: the committed `node_modules` currently ships the **unpatched** regex, so reapply this if multi-char short flags misbehave.
 
 ## Development Notes
 
