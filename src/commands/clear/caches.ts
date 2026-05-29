@@ -19,6 +19,8 @@ import { clearFileSuggestionCaches } from '../../hooks/fileSuggestions.js'
 import { clearAllPendingCallbacks } from '../../hooks/useSwarmPermissionPoller.js'
 import { clearAllDumpState } from '../../services/api/dumpPrompts.js'
 import { resetPromptCacheBreakDetection } from '../../services/api/promptCacheBreakDetection.js'
+import { resetCacheDiagnostics } from '../../services/api/cacheDiagnostics.js'
+import { resetDeepSeekFoldState } from '../../services/api/deepseekFold.js'
 import { clearAllSessions } from '../../services/api/sessionIngress.js'
 import { runPostCompactCleanup } from '../../services/compact/postCompactCleanup.js'
 import { resetAllLSPDiagnosticState } from '../../services/lsp/LSPDiagnosticRegistry.js'
@@ -61,6 +63,11 @@ export function clearSessionCaches(
 
   // Clear prompt cache break detection state
   if (!hasPreserved) resetPromptCacheBreakDetection()
+  // Reset DeepSeek KV-cache diagnostic state (turn counter, prefix hashes)
+  if (!hasPreserved) resetCacheDiagnostics()
+  // Discard the persistent DeepSeek context-fold summary so a new conversation
+  // doesn't reuse a stale fold.
+  if (!hasPreserved) resetDeepSeekFoldState()
 
   // Clear system prompt injection (cache breaker)
   setSystemPromptInjection(null)

@@ -492,7 +492,7 @@ export async function logContextMetrics(
       getSystemContext(),
     ])
   // Extract individual context sizes and calculate total
-  const gitStatusSize = systemContext.gitStatus?.length ?? 0
+  const gitStatusSize = userContext.gitStatus?.length ?? 0
   const claudeMdSize = userContext.claudeMd?.length ?? 0
 
   // Calculate total context size

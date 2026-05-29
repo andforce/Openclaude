@@ -516,7 +516,7 @@ async function sendCopilotChatCompletion(params: {
   return response
 }
 
-type OpenAIMessage = {
+export type OpenAIMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>
   tool_calls?: Array<{
@@ -540,6 +540,14 @@ type OpenAITool = {
   }
 }
 
+export function isDeepSeekThinkingModel(model: string): boolean {
+  return (
+    model.includes('reasoner') ||
+    model.includes('deepseek-v4') ||
+    model.includes('deepseek-v3.1')
+  )
+}
+
 export type AnthropicContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
@@ -556,10 +564,11 @@ export type AnthropicMessage = {
 export function convertAnthropicMessagesToOpenAI(
   messages: AnthropicMessage[],
   systemPrompt?: string,
-  opts?: { deepseek?: boolean },
+  opts?: { deepseek?: boolean; model?: string },
 ): OpenAIMessage[] {
   const result: OpenAIMessage[] = []
   const deepseek = opts?.deepseek === true
+  const isThinkingModel = deepseek && !!opts?.model && isDeepSeekThinkingModel(opts.model)
 
   if (systemPrompt) {
     result.push({ role: 'system', content: systemPrompt })
@@ -641,20 +650,88 @@ export function convertAnthropicMessagesToOpenAI(
       if (toolCalls.length > 0) {
         assistantMsg.tool_calls = toolCalls
       }
-      // DeepSeek thinking-mode models reject a follow-up request unless every
-      // assistant turn that has tool_calls echoes back reasoning_content. The
-      // field only needs to be present (empty string is accepted); preserve the
-      // real reasoning when we captured it as a thinking block.
-      if (deepseek && toolCalls.length > 0) {
-        assistantMsg.reasoning_content = reasoningParts.join('')
-      } else if (deepseek && reasoningParts.length > 0) {
-        assistantMsg.reasoning_content = reasoningParts.join('')
+      // DeepSeek requires reasoning_content to be echoed back on any assistant
+      // turn that is either (a) from a thinking-mode model, or (b) from any
+      // model that actually emitted reasoning. V4-era deepseek-chat can emit
+      // reasoning_content even with thinking.type=disabled — dropping it causes
+      // a 400 on the round-trip.
+      // Reasoning is always stamped for thinking-mode models (even as "") so
+      // that short responses without reasoning don't break the next request.
+      if (deepseek) {
+        if (reasoningParts.length > 0) {
+          assistantMsg.reasoning_content = reasoningParts.join('')
+        } else if (isThinkingModel) {
+          assistantMsg.reasoning_content = ''
+        } else if (toolCalls.length > 0) {
+          assistantMsg.reasoning_content = ''
+        }
       }
       result.push(assistantMsg)
     }
   }
 
+  // DeepSeek: strip stale reasoning from completed text-only turns in
+  // history to keep the append-only log byte-stable and save tokens.
+  if (deepseek) {
+    const stripped = stripDroppableReasoningContent(result)
+    return stripped.messages
+  }
+
   return result
+}
+
+/**
+ * DeepSeek KV-cache optimization: strip `reasoning_content` from completed
+ * text-only assistant turns in history. Reasoning on tool-call turns must
+ * be preserved (DeepSeek requires it for validation). Reasoning after the
+ * last user message (current turn) is also preserved.
+ *
+ * This mirrors Reasonix `stripDroppableReasoningContent` (reasoning-retention.ts).
+ */
+export function stripDroppableReasoningContent(messages: OpenAIMessage[]): {
+  messages: OpenAIMessage[]
+  prunedCount: number
+  charsDropped: number
+} {
+  // Find the last user message — everything after it is the current turn.
+  let lastUser = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      lastUser = i
+      break
+    }
+  }
+  if (lastUser < 0) {
+    return { messages, prunedCount: 0, charsDropped: 0 }
+  }
+
+  let next: OpenAIMessage[] | null = null
+  let prunedCount = 0
+  let charsDropped = 0
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!
+    // Keep if: not assistant, in current turn (i > lastUser), has tool_calls, or no reasoning_content
+    if (
+      msg.role !== 'assistant' ||
+      i > lastUser ||
+      (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) ||
+      !Object.hasOwn(msg, 'reasoning_content')
+    ) {
+      continue
+    }
+    // Lazy copy: only allocate a new array when we actually need to modify.
+    if (next === null) next = messages.slice()
+    const { reasoning_content: dropped, ...replacement } = msg
+    if (typeof dropped === 'string') charsDropped += dropped.length
+    next[i] = replacement as OpenAIMessage
+    prunedCount += 1
+  }
+
+  return {
+    messages: next ?? messages,
+    prunedCount,
+    charsDropped,
+  }
 }
 
 export function convertAnthropicToolsToOpenAI(
@@ -1020,6 +1097,17 @@ export function createCopilotFetchOverride(
 export function convertOpenAIStreamToAnthropic(
   openaiStream: ReadableStream<Uint8Array>,
   model: string,
+  /**
+   * Invoked once, when the final-chunk usage is parsed, with the prompt/cache
+   * token counts. Lets the bridge layer record DeepSeek cache diagnostics for
+   * the streaming path (the default path — usage is otherwise only available
+   * here, not in the non-streaming branch).
+   */
+  onUsage?: (usage: {
+    promptTokens: number
+    cacheHitTokens: number
+    cacheMissTokens: number
+  }) => void,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
@@ -1033,6 +1121,7 @@ export function convertOpenAIStreamToAnthropic(
   // `input_tokens` so the existing cost/usage tracking applies the discount.
   let inputTokens = 0
   let cacheReadTokens = 0
+  let usageReported = false
   const messageId = `msg_copilot_${Date.now()}`
   const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
   let sentMessageStart = false
@@ -1148,6 +1237,16 @@ export function convertOpenAIStreamToAnthropic(
               inputTokens =
                 usage.prompt_cache_miss_tokens ??
                 Math.max(0, usage.prompt_tokens - hit)
+              // Surface usage to the bridge once for cache diagnostics. DeepSeek
+              // sends a single final usage chunk, but guard against duplicates.
+              if (!usageReported && onUsage) {
+                usageReported = true
+                onUsage({
+                  promptTokens: usage.prompt_tokens,
+                  cacheHitTokens: hit,
+                  cacheMissTokens: inputTokens,
+                })
+              }
             }
 
             const choices = chunk.choices as Array<{

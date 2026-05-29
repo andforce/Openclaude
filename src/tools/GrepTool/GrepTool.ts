@@ -328,6 +328,12 @@ export const GrepTool = buildTool({
   ) {
     const absolutePath = path ? expandPath(path) : getCwd()
     const args = ['--hidden']
+    // Deterministic output: sort files by path so the same search returns
+    // the same byte sequence every time. Without this, ripgrep's parallel
+    // filesystem traversal produces OS-dependent ordering that churns the
+    // cache key. Mirrors Reasonix's principle (§16, §32) that all tool
+    // outputs entering the message log must be byte-stable.
+    args.push('--sort', 'path')
 
     // Exclude VCS directories to avoid noise from version control metadata
     for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {

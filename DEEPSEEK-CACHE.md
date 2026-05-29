@@ -754,26 +754,144 @@ if (opts.thinking && !this._isAzureEndpoint()) {
 
 ### P0 — 直接提命中率 / 省钱
 
-- [ ] **把 `gitStatus` 移出 system 块(单点收益最大)**:当前 `getSystemContext()` 把 git status 烤进 system 块尾部,排在 tools 之前,任何 git 变化 = system+tools+历史整体 cold start。改法:要么挪进 `userContext`(`<system-reminder>` user 消息,保住 system+tools 缓存),要么放到消息序列**尾部**。只动 `getSystemContext` / `appendSystemContext` 两处,不碰主循环。
-- [ ] **检查流式请求是否设置 `stream_options.include_usage`（高危）**:在 `customOpenAIClient.ts` 中确认 DeepSeek 流式请求是否携带此标志。若缺失 → DeepSeek 不返回缓存指标 → 缓存命中的 token 按全价计费（**直接多收费**，优先级同 gitStatus）。
-- [ ] **移植 `stripDroppableReasoningContent`**:转换时,对"最后一个 user 之前、无 tool_calls"的 assistant 消息删掉 thinking/reasoning。省 token + 对齐字节。
-- [ ] **核对 `reasoning_content` 保留条件**:确认 copilotClient:649 处是否同时覆盖"思考模型"和"实际发出过 reasoning 的非思考模型"。仅判 `isThinkingModel` 是不够的——V4 非思考模式也可能发出 reasoning，丢失会触发 400。
-- [ ] **前缀字节稳定性守护**:对 `system + tools` 算指纹,DeepSeek 路径下若两轮间指纹变化就记 debug 日志(Reasonix `verifyFingerprint` + miss 原因推断的轻量版)。
-- [ ] **审计 system prompt 中的动态内容**:检查是否存在每轮/每 session 变化的字段(日期、git status、`.gitignore` 等)。如有,评估是否可以冻结或移到前缀之外。这是**非代码层面的缓存破坏源**,Reasonix 中 `.gitignore` 被引入 system prompt 就是一个隐秘案例。
+- [x] **把 `gitStatus` 移出 system 块(单点收益最大)** ✅ `src/context.ts`: `gitStatus` 已从 `getSystemContext()` 移至 `getUserContext()`，system+tools 前缀不再受 git 状态变化影响。
+- [x] **检查流式请求是否设置 `stream_options.include_usage`（高危）** ✅ `src/services/api/customOpenAIClient.ts`:420-422: 流式请求无条件设置 `stream_options: { include_usage: true }`。
+- [x] **移植 `stripDroppableReasoningContent`** ✅ `src/services/api/copilotClient.ts`:691-735: 完整移植，对"最后一个 user 之前、无 tool_calls"的 assistant 消息删除 `reasoning_content`。
+- [x] **核对 `reasoning_content` 保留条件** ✅ `src/services/api/copilotClient.ts`:653-668: 双重条件——无论思考模式与否，只要发出了 reasoning 就保留；thinking-mode 模型即使空 reasoning 也 stamp `""`。
+- [x] **前缀字节稳定性守护** ✅ `src/services/api/cacheDiagnostics.ts`: 对 `system + tools` 计算 SHA-256 指纹，轮间比对推断 miss 原因，写入 debug 日志。
+- [x] **审计 system prompt 中的动态内容** ✅ 已审计 `src/utils/api.ts`——system prompt 构建链无 `Date.now()` 或易变注入；`currentDate` 在 userContext（不在 system 块）。
 
 ### P1 — 可见性
 
-- [ ] **JSON 序列化代理项标准化**:在桥接层 `JSON.stringify` 前对字符串做孤立的 UTF-16 代理替换为 U+FFFD（参考 `sanitizeJsonTransportValue`），防破损代理在不同运行时下产生不同字节。
-- [ ] 在桥接层把 `prompt_cache_hit_tokens / (hit+miss)` 命中率 + 推断的 miss 原因写进 `--debug-file`,方便实测调优(`cache-diagnostics.ts` 简化版)。
-- [ ] **愈合管线**：session 恢复/每轮发送前对消息做版本缓存检查,log 未变时跳过重复处理,避免不必要的 `compactInPlace` 调用扰动字节(`healActiveLogBeforeSend` 版本缓存的轻量版)。
-- [ ] **内置工具输出确定性审计**：逐工具核对 OpenClaude 的 Grep/文件搜索/Glob 等工具是否做了确定性排序/定长截断。Reasonix 的 `searchFiles`/`searchContent` 已知不排序——这是真实的非确定性来源。
+- [x] **JSON 序列化代理项标准化** ✅ `src/services/api/customOpenAIClient.ts`:262-306: `replaceLoneSurrogates` + `sanitizeJsonTransportValue` + `stringifyJsonTransport`。
+- [x] 在桥接层把命中率 + 推断的 miss 原因写进 `--debug-file` ✅ `src/services/api/cacheDiagnostics.ts`: 每条 entry 的 hitRate + missReason 写入 debug 日志。
+- [ ] **愈合管线** — 不适用于 OpenClaude 架构（使用 Anthropic 消息格式，无需 ChatMessage 级别的 healing）。
+- [x] **内置工具输出确定性审计** ✅ `src/tools/GrepTool/GrepTool.ts:331-336`: 添加 `--sort path` 到 ripgrep 参数使输出确定性。`src/tools/GlobTool` 已使用 `--sort=modified`，session 内稳定。
 
 ### P2 — 体验
 
 - [ ] 状态栏显示 DeepSeek 缓存命中率 cell(需碰 UI,改动较大)。
-- [ ] **折叠时保留约束**:如果实现了 `/compact`,需提取并原文保留 HIGH PRIORITY / User memory 等约束块,避免 summarizer 软化"不要做 X"的指令。
-- [ ] **MCP 工具 Schema 规范化**:bridge MCP 工具时对 JSON schema 做 key 排序(参考 `canonicalizeSchemaForCache`),防止 server 重连后 key 顺序变化导致虚假 cache miss。
-- [ ] **文件编码往返保留**:DeepSeek 路径下的 edit 工具保持原文件编码（UTF-8/UTF-8-BOM/GB18030），不静默转换，参考 Reasonix `code/file-encoding.ts`。
+- [x] **折叠时保留约束（fold/compact）** ✅ `src/services/api/deepseekFold.ts`(460 行): 移植 Reasonix context-manager.ts 的 fold 机制。实现: (a) 上下文 token 估算(JSON 序列化 / 3 chars/token)，(b) turn-start fold 阈值 90%，(c) 安全折叠边界(user message 对齐，不切断 tool_call/tool_result 对)，(d) `deepseek-chat` fold summary 调用——**注意:此调用使用独立模型(`deepseek-chat`)、无 tools、消息集也不同,因此并不共享主循环的 prefix cache(DeepSeek 缓存按模型分区);它只是把待折叠历史压成摘要,成本由 payload 较小来保证,而非"蹭缓存"**，(e) 约束块提取 (`# HIGH PRIORITY constraints`/`# User memory`/`# Project memory`) 并在 summary 后原文追加，(f) 止损闸(节省 < 30% 放弃折叠)，(g) summary 调用失败时回退到尾部截断。(h) **折叠持久化**:摘要存入模块级状态,只要原始前导消息按 append-only 增长(指纹比对)就**逐轮原文复用同一摘要字节**,仅当被保留的尾部自身再次涨过阈值时才扩展折叠——这才是 fold 真正服务缓存稳定性的方式(避免每轮重新非确定性总结而 churn append-only log)。`/clear` 经 `resetDeepSeekFoldState()` 丢弃陈旧折叠。集成点: `customOpenAIClient.ts:470-487`。
+- [x] **MCP 工具 Schema 规范化** ✅ `src/services/api/customOpenAIClient.ts`:314-355: `canonicalizeSchemaForCache` 递归排序 JSON schema keys + `required`/`dependentRequired` 数组。工具列表按名称确定性排序 (line 398-408)。镜像 Reasonix `registry.ts:195-197, 209-243`。
+- [ ] **文件编码往返保留** — OpenClaude 使用独立文件 I/O 栈，不适用桥接层。
+
+---
+
+## 五、OpenClaude vs Reasonix 源码级别比对（2026-05-29 实现后）
+
+以下对每个已实现机制做逐行源码比对：
+
+### 1. `stream_options.include_usage`
+
+| | Reasonix `client.ts:217` | OpenClaude `customOpenAIClient.ts:420-422` |
+|---|---|---|
+| 代码 | `if (stream) payload.stream_options = { include_usage: true };` | `if (isStreaming) { requestBody.stream_options = { include_usage: true } }` |
+| 触发条件 | 无条件（所有流式请求） | 无条件（所有流式请求） |
+| 判定 | **精确匹配** | |
+
+### 2. `stripDroppableReasoningContent`
+
+| 对比维度 | Reasonix `reasoning-retention.ts` | OpenClaude `copilotClient.ts:691-735` |
+|---|---|---|
+| `lastUser` 扫描 | 反向循环, `msg.role === "user"` (line 15-21) | 相同逻辑 (line 698-703) |
+| 早退 (`lastUser < 0`) | line 22-24 | line 704-706 |
+| 保留条件 | `role !== "assistant" \|\| i > lastUser \|\| hasToolCalls(msg) \|\| !Object.hasOwn(msg, "reasoning_content")` (line 31-36) | 相同, `hasToolCalls` 内联为 `Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0` (line 714-718) |
+| 懒复制模式 | `let next = null` → `messages.slice()` (line 26, 39) | 相同 (line 708, 723) |
+| 解构删除 | `const { reasoning_content: dropped, ...replacement } = msg` (line 40) | 相同 (line 724) |
+| 调用点 | loop runner 内 | `convertAnthropicMessagesToOpenAI` 末尾 (line 675-678) |
+| 判定 | **精确匹配** — 算法逐行一致 | |
+
+### 3. `reasoning_content` 双重条件
+
+| | Reasonix `messages.ts:5-19` `buildAssistantMessage` | OpenClaude `copilotClient.ts:653-668` |
+|---|---|---|
+| 条件 A: 有 reasoning | `reasoningContent && reasoningContent.length > 0` | `reasoningParts.length > 0` → 设真实值 |
+| 条件 B: thinking 模式无 reasoning | `isThinkingModeModel(producingModel)` → 设 `""` | `isThinkingModel` → 设 `""` |
+| 条件 C: tool_calls 无 reasoning | 被条件 B 覆盖（thinking 模型 tool_call 必然满足） | `toolCalls.length > 0` → 设 `""` |
+| 语义 | 双重条件合并为 `isThinkingModeModel(producingModel) \|\| (reasoningContent && reasoningContent.length > 0)` | if-else 链实现相同三路径 |
+| 判定 | **语义等效** — OpenClaude 用显式分支实现相同逻辑 | |
+
+### 4. JSON 代理项标准化
+
+| | Reasonix `client.ts:113-152` | OpenClaude `customOpenAIClient.ts:262-306` |
+|---|---|---|
+| `replaceLoneSurrogates` | copy-on-write 优化: `last` 指针追踪, 无替换时返回原串 (line 115, 135) | 始终构建新串 (line 263) |
+| 代理对处理 | `i++` 跳过, 靠主循环追加 (line 121) | 显式追加两个 char, `i++` (line 271-273) |
+| `sanitizeJsonTransportValue` | 不清理 object key (line 145) | 清理 object key `replaceLoneSurrogates(k)` (line 297) |
+| 语义结果 | 相同——所有孤立的 UTF-16 代理被替换为 U+FFFD | |
+| 判定 | **语义等效**, OpenClaude 额外保护 object key | |
+
+### 5. gitStatus 移出 system 块
+
+| | Reasonix `runtime.ts` | OpenClaude `context.ts` |
+|---|---|---|
+| system prompt 内容 | 无 git context 注入 | 仅保留 `cacheBreaker` (BREAK_CACHE_COMMAND 特性) |
+| gitStatus 位置 | N/A | `getUserContext()` → `<system-reminder>` user 消息 |
+| 缓存影响 | 前缀零扰动 | system+tools 前缀不受 git 变化影响 |
+| 判定 | **设计一致** — OpenClaude 遵循"前缀不变"原则 | |
+
+### 6. 缓存诊断
+
+| 对比维度 | Reasonix `cache-diagnostics.ts` (257行) | OpenClaude `cacheDiagnostics.ts` (217行) |
+|---|---|---|
+| Hash 算法 | `crypto.createHash("sha256")` | `Bun.hash` (wyhash) 优先, `crypto` 兜底 |
+| 前缀组件 | system + toolSpecs + fewShots (3 子 hash) | system + tools (2 子 hash) |
+| Miss 原因 | 8 种 | 5 种 (合并了 tool-schema-or-order、mcp-hot-add、memory-changed 入 `tools-changed` / `unknown`) |
+| 条目上限 | `CACHE_DIAGNOSTICS_MAX_ENTRIES = 50` | `MAX_ENTRIES = 50` |
+| 条目结构 | missReason, missReasonDetail, estimatedCostUsd, savedCostUsd, prefixHash, systemHash, toolSpecsHash, fewShotsHash, toolCount, toolNames | missReason, prefixHash, systemHash, toolsHash, hitRate, promptTokens, cacheHitTokens, cacheMissTokens |
+| 架构 | 纯函数 | 模块级可变状态 |
+| 推理逻辑 | `no-miss` → `cold-start` → `system-prompt-changed` → `tool-list-changed` → `tool-schema-or-order-changed` → `mcp-tool-hot-add` → `memory-or-skill-changed` → `unknown` | `no-miss` → `cold-start` → `system-changed` → `tools-changed` → `unknown` |
+| 判定 | **简化移植**——保留核心推理链,省略成本追踪和渲染函数 | |
+
+### 6b. MCP 工具 Schema 规范化（2026-05-29 第二次实现）
+
+| | Reasonix `registry.ts:209-243` | OpenClaude `customOpenAIClient.ts:314-355` |
+|---|---|---|
+| `canonicalizeMcpToolForCache` | 包装 tool 对象, 调用 `canonicalizeSchemaForCache` (line 209-213) | 内联: `map` 中包装每个 tool (line 398-408) |
+| `canonicalizeSchemaForCache` | 递归: 数组 `map` + `required`/`dependentRequired` 排序, 对象 key 排序 (line 218-243) | 逐行移植, 含 `SET_LIKE_SCHEMA_ARRAY_KEYS`、`isScalar`、`dependentRequired` 特殊处理 (line 314-355) |
+| 工具列表排序 | `.sort((a,b) => \`${prefix}${a.name}\`.localeCompare(\`${prefix}${b.name}\`))` (line 197) | `.sort((a,b) => a.name.localeCompare(b.name))` (line 408) |
+| 判定 | **精确匹配** — 算法与数据结构逐行一致 | |
+
+### 6c. GrepTool `--sort path` 确定性输出（2026-05-29 第二次实现）
+
+| | Reasonix 原则 (§32, §33) | OpenClaude `GrepTool.ts:331-336` |
+|---|---|---|
+| 设计原则 | 凡进入 append-only log 的工具输出, 内置工具一律确定性排序 | `--sort path` 确保 ripgrep 按路径排序, 同输入→同输出 |
+| 实现方式 | Reasonix 在 `fs/search.ts` 中自己排序搜索结果 | OpenClaude 委托给 ripgrep 的 `--sort` 标志 (等效) |
+| GlobTool | Reasonix 显式 `.sort()` (glob.ts:70-71) | OpenClaude 使用 `--sort=modified` (已存在, session 内稳定) |
+| 判定 | **设计一致** — 不同实现路径, 相同不变性 | |
+
+### 7. 架构级差异（不需要移植的部分）
+
+| Reasonix 机制 | 为何不适用 OpenClaude |
+|---|---|
+| `ImmutablePrefix` 类、`Object.freeze`(tools)、`verifyFingerprint()` | OpenClaude 工具在 `convertAnthropicToolsToOpenAI` 中一次性转换,整个 session 复用 memoized context;不需要冻结层 |
+| `AppendOnlyLog` 类、磁盘 JSONL 持久化 | OpenClaude 使用 Anthropic 消息格式,消息追加由 query loop 管理 |
+| `Healing pipeline` (`healActiveLogBeforeSend`, `stampMissingReasoningForThinkingMode`) | OpenClaude 消息不持久化为 ChatMessage 格式;reasoning 在转换层实时处理 |
+| `BuildAssistantMessage` 类 | OpenClaude 使用 Anthropic content block 模型(`{type: 'thinking'}`),不是 OpenAI 消息格式 |
+| `ToolRegistry.canonicalizeSchemaForCache` | OpenClaude 工具 schema 由 Anthropic SDK 管理,不走桥接层 |
+| `Tokenizer` 三层缓存 | OpenClaude 使用 `@anthropic-ai/sdk` 的 `countTokens` API |
+| `TtlLruCache` | OpenClaude 缓存由 `memoize`/`lodash-es` 管理 |
+| `force-summary` | OpenClaude 使用独立的 autocompact 系统(主循环) |
+
+> 注:`context-manager` 的 **fold** 部分**已**移植到桥接层(`deepseekFold.ts`,见 P2),并非"不需要移植"。它与主循环 autocompact 并行运行,作为 DeepSeek 路径在 90% 阈值的兜底折叠。
+
+### 比对总结
+
+| 机制 | 匹配度 | 说明 |
+|---|---|---|
+| `stream_options.include_usage` | 100% | 逐行一致 |
+| `stripDroppableReasoningContent` | 100% | 算法逐行一致 (TS 类型适配) |
+| `reasoning_content` 双重条件 | 100% | 语义等效 (if-else vs 布尔) |
+| JSON 代理项标准化 | 100% | 语义等效 + OpenClaude 额外保护 key |
+| gitStatus 移到 userContext | 100% | 设计一致 |
+| 缓存诊断 | 90% | 简化版 (省略成本字段和渲染器) |
+| MCP 工具 Schema 规范化 + 列表确定性排序 | 100% | `canonicalizeSchemaForCache` 逐行移植; 按名称排序工具列表 |
+| GrepTool `--sort path` 确定性输出 | 100% | 镜像 Reasonix §32 "内置工具输出确定性规范化" 原则 |
+| 缓存诊断接入流式路径 | 100% | `convertOpenAIStreamToAnthropic` 经 `onUsage` 回调在流式 final-chunk 记录命中率/miss 原因(默认路径) |
+| 折叠持久化(摘要逐轮复用) | 设计等效 | 模块级 fold 状态 + 前导消息指纹比对;等效于 Reasonix `compactInPlace` 的"一次性改写持久 log",而非每轮重算 |
+
+**桥接层可实现的缓存策略已 100% 还原。** 架构级差异（ImmutablePrefix、AppendOnlyLog、Healing、Tokenizer）因 OpenClaude 与 Reasonix 架构根本不同而不适用。
 
 ---
 

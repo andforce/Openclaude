@@ -7,6 +7,14 @@ import {
   convertOpenAIStreamToAnthropic,
   type AnthropicMessage,
 } from './copilotClient.js'
+import {
+  recordPrefixState,
+  recordCacheUsage,
+} from './cacheDiagnostics.js'
+import {
+  foldDeepSeekMessagesIfNeeded,
+} from './deepseekFold.js'
+import { stringifyJsonTransport } from './jsonTransport.js'
 
 const PREFIX = 'custom-openai:'
 
@@ -248,6 +256,49 @@ function makeSchemaStrict(schema: unknown): unknown {
   return s
 }
 
+// ---- Tool schema canonicalization for cache stability ----
+// DeepSeek's prefix cache is keyed by the full JSON bytes of tools. If an
+// MCP server returns schemas with different key ordering across restarts,
+// the byte sequence changes → cache miss. Canonicalizing schema keys to a
+// deterministic order (sorted) prevents this. Mirrors Reasonix
+// `canonicalizeSchemaForCache` in `src/mcp/registry.ts`.
+
+const SET_LIKE_SCHEMA_ARRAY_KEYS = new Set(['required', 'dependentRequired'])
+
+function isScalar(v: unknown): boolean {
+  return v === null || ['string', 'number', 'boolean'].includes(typeof v)
+}
+
+function canonicalizeSchemaForCache(value: unknown, parentKey?: string): unknown {
+  if (Array.isArray(value)) {
+    const mapped = value.map(item => canonicalizeSchemaForCache(item))
+    if (parentKey && SET_LIKE_SCHEMA_ARRAY_KEYS.has(parentKey) && mapped.every(isScalar)) {
+      return [...mapped].sort((a, b) => String(a).localeCompare(String(b)))
+    }
+    return mapped
+  }
+  if (!value || typeof value !== 'object') return value
+  // `dependentRequired` values are string[] — sort both the top-level keys
+  // and each value array (when it contains only scalars).
+  if (parentKey === 'dependentRequired') {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      const arr = (value as Record<string, unknown>)[key]
+      out[key] =
+        Array.isArray(arr) && arr.every(isScalar)
+          ? [...(arr as unknown[])].sort((a, b) => String(a).localeCompare(String(b)))
+          : canonicalizeSchemaForCache(arr, key)
+    }
+    return out
+  }
+  // General object: sort keys, recurse into each value.
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    out[key] = canonicalizeSchemaForCache((value as Record<string, unknown>)[key], key)
+  }
+  return out
+}
+
 /** Supports `https://host`, `https://host/v1`, DeepSeek `.../beta`, or a full path. */
 function chatCompletionsUrl(base: string, deepseek = false): string {
   const b = normalizeBaseUrl(base)
@@ -330,14 +381,28 @@ export function createCustomOpenAIFetchOverride(
     }
 
     const anthropicMessages = (anthropicBody.messages || []) as AnthropicMessage[]
-    const openaiMessages = convertAnthropicMessagesToOpenAI(anthropicMessages, systemPrompt, { deepseek })
+    let openaiMessages = convertAnthropicMessagesToOpenAI(anthropicMessages, systemPrompt, { deepseek, model: openaiModelId })
 
     const anthropicTools = (anthropicBody.tools || []) as Array<{
       name: string
       description?: string
       input_schema?: Record<string, unknown>
     }>
-    let openaiTools = anthropicTools.length > 0 ? convertAnthropicToolsToOpenAI(anthropicTools) : undefined
+    // DeepSeek: sort tools by name and canonicalize input schemas so the
+    // tool-list byte sequence is deterministic across MCP server restarts
+    // and import-order changes. Mirrors Reasonix registry.ts:195-197.
+    let stableTools = anthropicTools
+    if (deepseek) {
+      stableTools = anthropicTools
+        .map(t => ({
+          ...t,
+          ...(t.input_schema
+            ? { input_schema: canonicalizeSchemaForCache(t.input_schema) as Record<string, unknown> }
+            : {}),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    }
+    let openaiTools = stableTools.length > 0 ? convertAnthropicToolsToOpenAI(stableTools) : undefined
     if (openaiTools && useStrictTools) {
       openaiTools = openaiTools.map(t => ({
         ...t,
@@ -351,10 +416,41 @@ export function createCustomOpenAIFetchOverride(
 
     const isStreaming = anthropicBody.stream === true
 
+    // DeepSeek context fold: when conversation approaches the 128K token
+    // window, fold oldest messages into a summary to stay under the limit.
+    // The fold summary call includes the same system prompt for context, but
+    // is a separate lightweight call (no tools, different model) so its cost
+    // is negligible. Mirrors Reasonix context-manager.ts turn-start fold.
+    if (deepseek) {
+      // openaiMessages[0] is the system prompt block (added by conversion).
+      // Pass conversation-only messages to fold so the system prompt isn't
+      // double-counted in the token estimate.
+      const hasSystemMsg = openaiMessages.length > 0 && openaiMessages[0]!.role === 'system'
+      const conversationMessages = hasSystemMsg ? openaiMessages.slice(1) : openaiMessages
+      // Pass the resolved endpoint + key so deepseekFold needs no back-import
+      // (avoids a customOpenAIClient ↔ deepseekFold cycle).
+      const foldResult = await foldDeepSeekMessagesIfNeeded(conversationMessages, systemPrompt, {
+        endpoint,
+        apiKey: provider.apiKey,
+      })
+      if (foldResult.folded) {
+        openaiMessages = hasSystemMsg
+          ? [openaiMessages[0]!, ...foldResult.messages]
+          : foldResult.messages
+      }
+    }
+
     const requestBody: Record<string, unknown> = {
       model: openaiModelId,
       messages: openaiMessages,
       stream: isStreaming,
+    }
+
+    // DeepSeek requires stream_options.include_usage to return
+    // prompt_cache_hit/miss_tokens in streaming responses. Without
+    // this flag, cached tokens are billed at full price.
+    if (isStreaming) {
+      requestBody.stream_options = { include_usage: true }
     }
 
     if (anthropicBody.max_tokens) {
@@ -380,6 +476,17 @@ export function createCustomOpenAIFetchOverride(
       requestBody.tool_choice = convertToolChoice(anthropicBody.tool_choice) ?? 'auto'
     }
 
+    // DeepSeek cache diagnostics: capture prefix state before the API call
+    // so we can infer why a cache miss occurred. Only runs when debug
+    // logging is active (--debug / --debug-file).
+    let prefixSnapshot: ReturnType<typeof recordPrefixState> | null = null
+    if (deepseek) {
+      prefixSnapshot = recordPrefixState({
+        system: systemPrompt,
+        tools: stableTools,
+      })
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': 'claude-code/2.1.88',
@@ -391,7 +498,7 @@ export function createCustomOpenAIFetchOverride(
     const openaiResponse = await fetch(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify(requestBody),
+      body: stringifyJsonTransport(requestBody),
       signal: init?.signal,
     })
 
@@ -464,6 +571,20 @@ export function createCustomOpenAIFetchOverride(
       const inputTokens =
         data.usage?.prompt_cache_miss_tokens ?? Math.max(0, promptTokens - cacheHit)
 
+      // Record DeepSeek cache diagnostics for debug inspection.
+      const cacheMissTokens = data.usage?.prompt_cache_miss_tokens ??
+        Math.max(0, promptTokens - cacheHit)
+      if (deepseek && prefixSnapshot) {
+        recordCacheUsage({
+          prefixHash: prefixSnapshot.prefixHash,
+          systemHash: prefixSnapshot.systemHash,
+          toolsHash: prefixSnapshot.toolsHash,
+          promptTokens,
+          cacheHitTokens: cacheHit,
+          cacheMissTokens,
+        })
+      }
+
       const anthropicResponse = {
         id: data.id || `msg_custom_openai_${Date.now()}`,
         type: 'message',
@@ -488,7 +609,25 @@ export function createCustomOpenAIFetchOverride(
       return openaiResponse
     }
 
-    const transformStream = convertOpenAIStreamToAnthropic(openaiResponse.body, openaiModelId)
+    // DeepSeek cache diagnostics for the streaming path (the default path).
+    // Usage is only available inside the stream's final chunk, so record it via
+    // a callback rather than the non-streaming branch above.
+    const transformStream = convertOpenAIStreamToAnthropic(
+      openaiResponse.body,
+      openaiModelId,
+      deepseek && prefixSnapshot
+        ? usage => {
+            recordCacheUsage({
+              prefixHash: prefixSnapshot!.prefixHash,
+              systemHash: prefixSnapshot!.systemHash,
+              toolsHash: prefixSnapshot!.toolsHash,
+              promptTokens: usage.promptTokens,
+              cacheHitTokens: usage.cacheHitTokens,
+              cacheMissTokens: usage.cacheMissTokens,
+            })
+          }
+        : undefined,
+    )
 
     return new Response(transformStream, {
       status: 200,

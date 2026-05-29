@@ -120,13 +120,6 @@ export const getSystemContext = memoize(
     const startTime = Date.now()
     logForDiagnosticsNoPII('info', 'system_context_started')
 
-    // Skip git status in CCR (unnecessary overhead on resume) or when git instructions are disabled
-    const gitStatus =
-      isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) ||
-      !shouldIncludeGitInstructions()
-        ? null
-        : await getGitStatus()
-
     // Include system prompt injection if set (for cache breaking, ant-only)
     const injection = feature('BREAK_CACHE_COMMAND')
       ? getSystemPromptInjection()
@@ -134,12 +127,10 @@ export const getSystemContext = memoize(
 
     logForDiagnosticsNoPII('info', 'system_context_completed', {
       duration_ms: Date.now() - startTime,
-      has_git_status: gitStatus !== null,
       has_injection: injection !== null,
     })
 
     return {
-      ...(gitStatus && { gitStatus }),
       ...(feature('BREAK_CACHE_COMMAND') && injection
         ? {
             cacheBreaker: `[CACHE_BREAKER: ${injection}]`,
@@ -175,13 +166,24 @@ export const getUserContext = memoize(
     // cycle through permissions/filesystem → permissions → yoloClassifier).
     setCachedClaudeMdContent(claudeMd || null)
 
+    // Skip git status in CCR (unnecessary overhead on resume) or when git instructions are disabled.
+    // Placed in userContext (not systemContext) to keep the system+tools prefix byte-stable for
+    // DeepSeek KV cache — a git branch change would otherwise cold-start the entire prefix.
+    const gitStatus =
+      isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) ||
+      !shouldIncludeGitInstructions()
+        ? null
+        : await getGitStatus()
+
     logForDiagnosticsNoPII('info', 'user_context_completed', {
       duration_ms: Date.now() - startTime,
       claudemd_length: claudeMd?.length ?? 0,
       claudemd_disabled: Boolean(shouldDisableClaudeMd),
+      has_git_status: gitStatus !== null,
     })
 
     return {
+      ...(gitStatus && { gitStatus }),
       ...(claudeMd && { claudeMd }),
       currentDate: `Today's date is ${getLocalISODate()}.`,
     }
