@@ -33,6 +33,11 @@ const PROVIDERS: OptionWithDescription<string>[] = [
     hint: 'Self-hosted or LAN · base URL + optional key · pick model from /v1/models',
   },
   {
+    value: 'custom-openai',
+    label: 'Custom OpenAI-compatible API',
+    hint: 'OpenAI /v1/chat/completions · OpenAI, Ollama, vLLM, LM Studio… · base URL + optional key',
+  },
+  {
     value: 'openrouter',
     label: 'OpenRouter Anthropic-compatible API',
     hint: 'Unified API for multiple models',

@@ -525,6 +525,9 @@ type OpenAIMessage = {
     function: { name: string; arguments: string }
   }>
   tool_call_id?: string
+  // DeepSeek thinking-mode models require reasoning_content to be echoed back on
+  // any assistant turn that carries tool_calls, or the next request fails with 400.
+  reasoning_content?: string
 }
 
 type OpenAITool = {
@@ -533,6 +536,7 @@ type OpenAITool = {
     name: string
     description: string
     parameters: Record<string, unknown>
+    strict?: boolean
   }
 }
 
@@ -552,8 +556,10 @@ export type AnthropicMessage = {
 export function convertAnthropicMessagesToOpenAI(
   messages: AnthropicMessage[],
   systemPrompt?: string,
+  opts?: { deepseek?: boolean },
 ): OpenAIMessage[] {
   const result: OpenAIMessage[] = []
+  const deepseek = opts?.deepseek === true
 
   if (systemPrompt) {
     result.push({ role: 'system', content: systemPrompt })
@@ -607,11 +613,14 @@ export function convertAnthropicMessagesToOpenAI(
       }
     } else if (msg.role === 'assistant') {
       const textParts: string[] = []
+      const reasoningParts: string[] = []
       const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = []
 
       for (const block of msg.content) {
         if (block.type === 'text') {
           textParts.push((block as { type: 'text'; text: string }).text)
+        } else if (block.type === 'thinking') {
+          reasoningParts.push((block as { type: 'thinking'; thinking: string }).thinking || '')
         } else if (block.type === 'tool_use') {
           const tuBlock = block as { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
           toolCalls.push({
@@ -631,6 +640,15 @@ export function convertAnthropicMessagesToOpenAI(
       }
       if (toolCalls.length > 0) {
         assistantMsg.tool_calls = toolCalls
+      }
+      // DeepSeek thinking-mode models reject a follow-up request unless every
+      // assistant turn that has tool_calls echoes back reasoning_content. The
+      // field only needs to be present (empty string is accepted); preserve the
+      // real reasoning when we captured it as a thinking block.
+      if (deepseek && toolCalls.length > 0) {
+        assistantMsg.reasoning_content = reasoningParts.join('')
+      } else if (deepseek && reasoningParts.length > 0) {
+        assistantMsg.reasoning_content = reasoningParts.join('')
       }
       result.push(assistantMsg)
     }
@@ -1012,6 +1030,11 @@ export function convertOpenAIStreamToAnthropic(
   const messageId = `msg_copilot_${Date.now()}`
   const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
   let sentMessageStart = false
+  // DeepSeek thinking-mode models stream their chain-of-thought in
+  // `delta.reasoning_content` (before content/tool_calls). Surface it as an
+  // Anthropic `thinking` block at index 0 so it renders and round-trips.
+  let reasoningStarted = false
+  let reasoningStopped = false
 
   return new ReadableStream({
     async start(controller) {
@@ -1022,6 +1045,13 @@ export function convertOpenAIStreamToAnthropic(
         controller.enqueue(
           encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`),
         )
+      }
+
+      function closeReasoning() {
+        if (reasoningStarted && !reasoningStopped) {
+          reasoningStopped = true
+          emitEvent({ type: 'content_block_stop', index: 0 })
+        }
       }
 
       try {
@@ -1037,6 +1067,7 @@ export function convertOpenAIStreamToAnthropic(
             if (!line.startsWith('data: ')) continue
             const data = line.slice(6).trim()
             if (data === '[DONE]') {
+              closeReasoning()
               if (hasStartedText) {
                 emitEvent({ type: 'content_block_stop', index: contentIndex })
               }
@@ -1087,6 +1118,7 @@ export function convertOpenAIStreamToAnthropic(
             const choices = chunk.choices as Array<{
               delta?: {
                 content?: string | null
+                reasoning_content?: string | null
                 tool_calls?: Array<{
                   index: number
                   id?: string
@@ -1101,7 +1133,29 @@ export function convertOpenAIStreamToAnthropic(
 
             const delta = choice.delta
 
+            const reasoning = delta.reasoning_content
+            if (reasoning != null && reasoning !== '' && !reasoningStopped) {
+              if (!reasoningStarted) {
+                reasoningStarted = true
+                emitEvent({
+                  type: 'content_block_start',
+                  index: 0,
+                  content_block: { type: 'thinking', thinking: '' },
+                })
+                // Reasoning occupies index 0; text/tool blocks come after it.
+                if (!hasStartedText && toolCalls.size === 0) {
+                  contentIndex = 1
+                }
+              }
+              emitEvent({
+                type: 'content_block_delta',
+                index: 0,
+                delta: { type: 'thinking_delta', thinking: reasoning },
+              })
+            }
+
             if (delta.content != null && delta.content !== '') {
+              closeReasoning()
               if (!hasStartedText) {
                 hasStartedText = true
                 emitEvent({
@@ -1118,16 +1172,18 @@ export function convertOpenAIStreamToAnthropic(
             }
 
             if (delta.tool_calls) {
+              closeReasoning()
               for (const tc of delta.tool_calls) {
                 if (tc.id) {
                   if (hasStartedText && toolCalls.size === 0) {
                     emitEvent({ type: 'content_block_stop', index: contentIndex })
                     contentIndex++
                   }
+                  const initialArgs = tc.function?.arguments || ''
                   toolCalls.set(tc.index, {
                     id: tc.id,
                     name: tc.function?.name || '',
-                    arguments: tc.function?.arguments || '',
+                    arguments: initialArgs,
                   })
                   const toolBlockIndex = contentIndex + tc.index
                   emitEvent({
@@ -1140,6 +1196,19 @@ export function convertOpenAIStreamToAnthropic(
                       input: {},
                     },
                   })
+                  // DeepSeek (and some OpenAI-compatible servers) pack the first
+                  // argument fragment into the same chunk that carries the id.
+                  // Emit it as a delta so it is not lost during reconstruction.
+                  if (initialArgs) {
+                    emitEvent({
+                      type: 'content_block_delta',
+                      index: toolBlockIndex,
+                      delta: {
+                        type: 'input_json_delta',
+                        partial_json: initialArgs,
+                      },
+                    })
+                  }
                 } else if (tc.function?.arguments) {
                   const existing = toolCalls.get(tc.index)
                   if (existing) {
@@ -1159,6 +1228,7 @@ export function convertOpenAIStreamToAnthropic(
             }
 
             if (choice.finish_reason) {
+              closeReasoning()
               if (hasStartedText && toolCalls.size === 0) {
                 emitEvent({ type: 'content_block_stop', index: contentIndex })
               }
