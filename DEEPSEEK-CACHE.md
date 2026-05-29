@@ -730,17 +730,19 @@ if (opts.thinking && !this._isAzureEndpoint()) {
 2. **`reasoning_content` 全程携带,没有"按需保留"。** 已完成回合的纯文本答案也带着 reasoning 一路重发——费 token,且与 DeepSeek 对已完成回合的内部处理不一致。
 3. **没有缓存命中率可见性。** 算进了成本,但看不到 hit rate,无法定位是哪一轮、因为什么 miss。
 4. **`/compact` 等历史改写不保证前缀复用**(走 Anthropic 主循环压缩,不是 DeepSeek-aware 的)。
-5. **System prompt 含易变动态内容(已逐行证实并定位)**。OpenClaude 把上下文分成**两个桶**,缓存影响截然不同:
+5. **System prompt 含易变动态内容（已逐行证实并定位）。✅ 已修复 —— 见 §四 P0 与 §五.5。** 下表为**改造前**的诊断（保留以说明问题根因），现状结论附在表后。OpenClaude 把上下文分成**两个桶**,缓存影响截然不同:
 
    | 桶 | 来源 | 进入位置 | 内容 | DeepSeek 影响 |
    |---|---|---|---|---|
-   | **systemContext** | `getSystemContext()`(`src/context.ts:116`) | `appendSystemContext` 追加到 **system 块尾部**(`query.ts:450` → `fullSystemPrompt` → `query.ts:661`) | **`gitStatus`**(branch + `git status --short` + `git log --oneline -n 5` + 用户名),及 ant-only 的 `cacheBreaker` | **最严重**:位于 tools 之前,一旦变化 → system+tools+全部历史**整体 cold start** |
-   | **userContext** | `getUserContext()` | `prependUserContext` 包成 **`<system-reminder>` user 消息**(`query.ts:660`) | **`claudeMd`**、`currentDate` 等 | 较轻:保住 system+tools 缓存,但从首条 user 消息起 miss |
+   | **systemContext** | `getSystemContext()`(`src/context.ts:116`) | `appendSystemContext` 追加到 **system 块尾部**(`query.ts:450` → `fullSystemPrompt` → `query.ts:661`) | 改造前:`gitStatus`（branch + `git status --short` + `git log --oneline -n 5` + 用户名）;**现状仅保留 ant-only 的 `cacheBreaker`** | **改造前最严重**:位于 tools 之前,一旦变化 → system+tools+全部历史**整体 cold start** |
+   | **userContext** | `getUserContext()` | `prependUserContext` 包成 **`<system-reminder>` user 消息**(`query.ts:660`) | **`gitStatus`（已移入）**、`claudeMd`、`currentDate` 等 | 较轻:保住 system+tools 缓存,但从首条 user 消息起 miss |
 
    关键结论:
-   - **git status 被烤进了 system 块**(`api.ts:495` 取 `systemContext.gitStatus` 证实),且排在 tools 前面 —— 这是 OpenClaude DeepSeek 命中率的**头号前缀破坏源**,而非 CLAUDE.md/日期。
-   - `getSystemContext` 是 **memoize 的**("cached for the duration of the conversation"),所以**同一 session 内 git status 字节恒定**,轮间稳定。代价:(a) 每个**新 session** 的前缀都随当时 git 状态不同;(b) 被 `setSystemPromptInjection()`(`context.ts:33`)或 `commands/clear/caches.ts` 清缓存时,会 **session 中途吃一次满 miss**。
-   - 相对地,OpenClaude 把 `claudeMd`/`currentDate` 放进 user 消息桶是**对的**(比 Reasonix 把 `.gitignore` 塞 system 更克制),保住了 system+tools 段的缓存。
+   - **改造前** git status 被烤进了 system 块且排在 tools 前面 —— 这曾是 OpenClaude DeepSeek 命中率的**头号前缀破坏源**,而非 CLAUDE.md/日期。
+   - **现状（已修复）**:`gitStatus` 已迁至 `getUserContext()`(`context.ts:172-176`,带说明注释),`api.ts:495` 现读取的是 `userContext.gitStatus`;它经 `prependUserContext` 落到 **`messages[0]` 这条 user 消息**,排在 system + tools **之后**——所以即便 git 状态变化,blast radius 也只到 `messages[0]` 起,**system + tools 前缀仍命中**。
+   - **memoize 是锦上添花,不是替代**:`getSystemContext`/`getUserContext` 二者**都** memoize（"cached for the duration of the conversation"），同 session 内字节恒定。但真正把前缀破坏源消掉的是"移出 system 块"这步——把易变内容排到 tools 之后,使其变化不再波及昂贵的 system+tools 段。（曾有评审据"memoize 保证 session 内稳定"误判为"代码未移出"，与现状不符。）
+   - OpenClaude 把 `claudeMd`/`currentDate` 放进 user 消息桶也是**对的**(比 Reasonix 把 `.gitignore` 塞 system 更克制),保住了 system+tools 段的缓存。
+   - 子 agent 侧:`runAgent.ts` 对 Explore/Plan 这类只读 agent 会从 `userContext` 剥掉 session-start 的 stale `gitStatus`（曾误剥 `systemContext` 而成空操作,现已改为剥 `userContext`）。
 	6. **流式模式下可能丢失缓存指标（高危）。** Reasonix 在 `client.ts:217` 对流式请求设置 `stream_options.include_usage: true`，这是 DeepSeek 在流式下返回 `prompt_cache_hit/miss_tokens` 的**必要条件**。如果 OpenClaude 的 `customOpenAIClient.ts` 对流式请求缺少此标志，所有流式请求的缓存 token 数据将为空——缓存命中的 token 被按全价计费（**直接多收费**）。
 	7. **JSON 序列化没有代理项标准化。** Reasonix 在 `client.ts:113-152` 通过 `sanitizeJsonTransportValue()` 将所有孤立的 UTF-16 代理替换为 U+FFFD 后再 `JSON.stringify`。如果 OpenClaude 桥接层直接用原生 `JSON.stringify`，包含破损代理的字符串会在不同运行时/编码路径下产生不同字节，churn append-only log 并导致 false cache miss。
 	8. **`reasoning_content` 保留逻辑可能不够宽。** Reasonix 的 `buildAssistantMessage`（`loop/messages.ts:13-18`）用双重条件：思考模型**或**任何实际发出过 reasoning 的模型都回传。因为 V4 的 deepseek-chat 即使在非思考模式下也会返回 `reasoning_content`，而 API 会在往返中拒绝丢失它。如果 OpenClaude 只判 `isThinkingModel` 而忽略"模型实际发出过 reasoning"的情况（copilotClient:649），非思考模式 V4 的 tool_call 回合会触发 400。

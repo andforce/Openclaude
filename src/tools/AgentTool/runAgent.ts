@@ -391,23 +391,29 @@ export async function* runAgent({
     agentDefinition.omitClaudeMd &&
     !override?.userContext &&
     getFeatureValue_CACHED_MAY_BE_STALE('tengu_slim_subagent_claudemd', true)
-  const { claudeMd: _omittedClaudeMd, ...userContextNoClaudeMd } =
-    baseUserContext
-  const resolvedUserContext = shouldOmitClaudeMd
-    ? userContextNoClaudeMd
-    : baseUserContext
-
   // Explore/Plan are read-only search agents — the parent-session-start
   // gitStatus (up to 40KB, explicitly labeled stale) is dead weight. If they
   // need git info they run `git status` themselves and get fresh data.
-  // Saves ~1-3 Gtok/week fleet-wide.
-  const { gitStatus: _omittedGitStatus, ...systemContextNoGit } =
-    baseSystemContext
-  const resolvedSystemContext =
-    agentDefinition.agentType === 'Explore' ||
-    agentDefinition.agentType === 'Plan'
-      ? systemContextNoGit
-      : baseSystemContext
+  // Saves ~1-3 Gtok/week fleet-wide. NOTE: gitStatus now lives in userContext
+  // (moved out of systemContext for DeepSeek prefix stability), so it must be
+  // stripped there — stripping systemContext would be a no-op.
+  const shouldOmitGitStatus =
+    !override?.userContext &&
+    (agentDefinition.agentType === 'Explore' ||
+      agentDefinition.agentType === 'Plan')
+
+  let resolvedUserContext = baseUserContext
+  if (shouldOmitClaudeMd) {
+    const { claudeMd: _omittedClaudeMd, ...rest } = resolvedUserContext
+    resolvedUserContext = rest
+  }
+  if (shouldOmitGitStatus) {
+    const { gitStatus: _omittedGitStatus, ...rest } = resolvedUserContext
+    resolvedUserContext = rest
+  }
+
+  // systemContext no longer carries gitStatus; pass it through unchanged.
+  const resolvedSystemContext = baseSystemContext
 
   // Override permission mode if agent defines one
   // However, don't override if parent is in bypassPermissions or acceptEdits mode - those should always take precedence
