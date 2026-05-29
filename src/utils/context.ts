@@ -8,6 +8,11 @@ import { getModelCapability } from './model/modelCapabilities.js'
 // Model context window size (200k tokens for all models right now)
 export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 
+// DeepSeek models expose a 1M-token context window. They aren't in the
+// capability metadata, so resolve it explicitly — keeps the DeepSeek status
+// row, /context, and auto-compact thresholds consistent.
+export const DEEPSEEK_CONTEXT_TOKENS = 1_000_000
+
 // Maximum output tokens for compact operations
 export const COMPACT_MAX_OUTPUT_TOKENS = 20_000
 
@@ -64,6 +69,11 @@ export function getContextWindowForModel(
     if (!isNaN(override) && override > 0) {
       return override
     }
+  }
+
+  // DeepSeek models ship a 1M context window and aren't in the capability table.
+  if (/deepseek/i.test(model)) {
+    return DEEPSEEK_CONTEXT_TOKENS
   }
 
   // [1m] suffix — explicit client-side opt-in, respected over all detection

@@ -86,6 +86,27 @@ export const COST_HAIKU_45 = {
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
 
+// DeepSeek pricing (¥ per 1M tokens). Priced directly in CNY — the DeepSeek
+// status row renders these as ¥ with no FX conversion. The bridge maps cache-hit
+// tokens into cache_read_input_tokens and cache-miss tokens into input_tokens
+// (see customOpenAIClient.ts), so promptCacheReadTokens = hit price and
+// inputTokens = miss price. Adjust to the provider's actual rate card if needed.
+export const DEEPSEEK_COST_CHAT = {
+  inputTokens: 2,
+  outputTokens: 3,
+  promptCacheWriteTokens: 0.2,
+  promptCacheReadTokens: 0.2,
+  webSearchRequests: 0,
+} as const satisfies ModelCosts
+
+export const DEEPSEEK_COST_PRO = {
+  inputTokens: 3,
+  outputTokens: 6,
+  promptCacheWriteTokens: 0.3,
+  promptCacheReadTokens: 0.3,
+  webSearchRequests: 0,
+} as const satisfies ModelCosts
+
 const DEFAULT_UNKNOWN_MODEL_COST = COST_TIER_5_25
 
 /**
@@ -141,7 +162,31 @@ function tokensToUSDCost(modelCosts: ModelCosts, usage: Usage): number {
   )
 }
 
+/**
+ * DeepSeek model pricing (¥ per 1M tokens), or undefined for non-DeepSeek
+ * models. Matched loosely on the model id so it works whether the id is bare
+ * (`deepseek-v4-pro`) or carries the custom-openai prefix.
+ */
+export function getDeepSeekCosts(model: string): ModelCosts | undefined {
+  const m = model.toLowerCase()
+  if (!m.includes('deepseek')) {
+    return undefined
+  }
+  if (m.includes('pro') || m.includes('reasoner')) {
+    return DEEPSEEK_COST_PRO
+  }
+  return DEEPSEEK_COST_CHAT
+}
+
 export function getModelCosts(model: string, usage: Usage): ModelCosts {
+  // DeepSeek (custom-openai) isn't in the canonical Anthropic table; price it
+  // directly so cost tracking + the DeepSeek status row are accurate rather
+  // than falling back to Opus pricing.
+  const deepseekCosts = getDeepSeekCosts(model)
+  if (deepseekCosts) {
+    return deepseekCosts
+  }
+
   const shortName = getCanonicalName(model)
 
   // Check if this is an Opus 4.6 model with fast mode active.
