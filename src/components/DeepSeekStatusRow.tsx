@@ -20,10 +20,6 @@ import { parseOpenAICompatibleModelValue } from '../utils/customOpenAIProviders.
 import { calculateCostFromTokens } from '../utils/modelCost.js'
 import { getCurrentUsage } from '../utils/tokens.js'
 
-const CTX_BAR_CELLS = 8
-const BLOCK = '█' // █ full block
-const SHADE = '░' // ░ light shade
-
 type Props = {
   // messagesRef stays behind a ref (read at render); lastAssistantMessageId is
   // the actual re-render trigger (mirrors StatusLine) and the balance refresh key.
@@ -101,12 +97,10 @@ function DeepSeekStatusRowInner({
     : 0
   const ratio = cap > 0 ? Math.min(1, usedTokens / cap) : 0
   const pct = ctx.used ?? 0
-  const filled = Math.round(CTX_BAR_CELLS * ratio)
   const barColor = ctxColor(ratio)
 
   // Progressive disclosure on narrow terminals.
   const showTokens = columns >= 72
-  const showBar = columns >= 54
 
   return (
     <Box gap={1}>
@@ -122,13 +116,6 @@ function DeepSeekStatusRowInner({
 
       <Text>
         <Text color="subtle">{'ctx '}</Text>
-        {showBar && (
-          <>
-            <Text color={barColor}>{BLOCK.repeat(filled)}</Text>
-            <Text color="subtle">{SHADE.repeat(CTX_BAR_CELLS - filled)}</Text>
-            <Text> </Text>
-          </>
-        )}
         <Text color={barColor}>{`${pct}%`}</Text>
         {showTokens && (
           <Text color="subtle">{` · ${formatTokens(usedTokens)}/${formatTokens(cap)}`}</Text>
