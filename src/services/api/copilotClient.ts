@@ -317,6 +317,10 @@ function buildCopilotChatRequestBody(params: {
   maxTokens?: number
   tools?: OpenAITool[]
   outputTokenParam: CopilotOutputTokenParam
+  temperature?: number
+  top_p?: number
+  stop?: string | string[]
+  toolChoice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } }
 }): Record<string, unknown> {
   const requestBody: Record<string, unknown> = {
     model: params.modelId,
@@ -330,7 +334,17 @@ function buildCopilotChatRequestBody(params: {
 
   if (params.tools && params.tools.length > 0) {
     requestBody.tools = params.tools
-    requestBody.tool_choice = 'auto'
+    requestBody.tool_choice = params.toolChoice ?? 'auto'
+  }
+
+  if (typeof params.temperature === 'number') {
+    requestBody.temperature = params.temperature
+  }
+  if (typeof params.top_p === 'number') {
+    requestBody.top_p = params.top_p
+  }
+  if (params.stop) {
+    requestBody.stop = params.stop
   }
 
   return requestBody
@@ -431,6 +445,10 @@ async function sendCopilotChatCompletion(params: {
   maxTokens?: number
   tools?: OpenAITool[]
   signal?: AbortSignal
+  temperature?: number
+  top_p?: number
+  stop?: string | string[]
+  toolChoice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } }
 }): Promise<Response> {
   const compatibility = getCachedCopilotCompatibility(params.modelId)
   if (compatibility?.modelSupported === false) {
@@ -454,6 +472,10 @@ async function sendCopilotChatCompletion(params: {
     maxTokens: params.maxTokens,
     tools: params.tools,
     outputTokenParam,
+    temperature: params.temperature,
+    top_p: params.top_p,
+    stop: params.stop,
+    toolChoice: params.toolChoice,
   })
 
   let response = await postCopilotChatCompletion({
@@ -493,6 +515,10 @@ async function sendCopilotChatCompletion(params: {
     maxTokens: params.maxTokens,
     tools: params.tools,
     outputTokenParam,
+    temperature: params.temperature,
+    top_p: params.top_p,
+    stop: params.stop,
+    toolChoice: params.toolChoice,
   })
 
   response = await postCopilotChatCompletion({
@@ -540,6 +566,30 @@ type OpenAITool = {
   }
 }
 
+/** Anthropic `tool_choice` → OpenAI `tool_choice`. Shared with custom-openai path. */
+export function convertToolChoice(
+  toolChoice: unknown,
+): 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } } | undefined {
+  if (!toolChoice || typeof toolChoice !== 'object') {
+    return undefined
+  }
+  const tc = toolChoice as { type?: string; name?: string }
+  switch (tc.type) {
+    case 'auto':
+      return 'auto'
+    case 'any':
+      return 'required'
+    case 'none':
+      return 'none'
+    case 'tool':
+      return tc.name
+        ? { type: 'function', function: { name: tc.name } }
+        : 'required'
+    default:
+      return undefined
+  }
+}
+
 export function isDeepSeekThinkingModel(model: string): boolean {
   return (
     model.includes('reasoner') ||
@@ -564,11 +614,22 @@ export type AnthropicMessage = {
 export function convertAnthropicMessagesToOpenAI(
   messages: AnthropicMessage[],
   systemPrompt?: string,
-  opts?: { deepseek?: boolean; model?: string },
+  opts?: { deepseek?: boolean; model?: string; requiresReasoningContent?: boolean },
 ): OpenAIMessage[] {
   const result: OpenAIMessage[] = []
   const deepseek = opts?.deepseek === true
-  const isThinkingModel = deepseek && !!opts?.model && isDeepSeekThinkingModel(opts.model)
+  // Providers running a thinking mode reject assistant tool-call turns that
+  // omit reasoning_content. DeepSeek requires it; Kimi (thinking on by default)
+  // 400s with "thinking is enabled but reasoning_content is missing in
+  // assistant tool call message". `requiresReasoningContent` opts other
+  // OpenAI-compatible providers (e.g. Kimi) into the same echo behaviour.
+  const requiresReasoningContent = deepseek || opts?.requiresReasoningContent === true
+  // Stamp reasoning_content even when empty: DeepSeek thinking-mode models and
+  // any `requiresReasoningContent` provider need the field present on every
+  // assistant turn so short / reasoning-less responses don't break the round-trip.
+  const stampEmptyReasoning =
+    (deepseek && !!opts?.model && isDeepSeekThinkingModel(opts.model)) ||
+    opts?.requiresReasoningContent === true
 
   if (systemPrompt) {
     result.push({ role: 'system', content: systemPrompt })
@@ -650,17 +711,17 @@ export function convertAnthropicMessagesToOpenAI(
       if (toolCalls.length > 0) {
         assistantMsg.tool_calls = toolCalls
       }
-      // DeepSeek requires reasoning_content to be echoed back on any assistant
-      // turn that is either (a) from a thinking-mode model, or (b) from any
-      // model that actually emitted reasoning. V4-era deepseek-chat can emit
-      // reasoning_content even with thinking.type=disabled — dropping it causes
-      // a 400 on the round-trip.
-      // Reasoning is always stamped for thinking-mode models (even as "") so
-      // that short responses without reasoning don't break the next request.
-      if (deepseek) {
+      // DeepSeek / Kimi require reasoning_content to be echoed back on any
+      // assistant turn that is either (a) from a thinking-mode model, or (b)
+      // from any model that actually emitted reasoning. V4-era deepseek-chat
+      // can emit reasoning_content even with thinking.type=disabled, and Kimi
+      // 400s on assistant tool-call turns that drop it — dropping it breaks the
+      // round-trip. Reasoning is stamped even as "" for thinking-mode providers
+      // so short responses without reasoning don't break the next request.
+      if (requiresReasoningContent) {
         if (reasoningParts.length > 0) {
           assistantMsg.reasoning_content = reasoningParts.join('')
-        } else if (isThinkingModel) {
+        } else if (stampEmptyReasoning) {
           assistantMsg.reasoning_content = ''
         } else if (toolCalls.length > 0) {
           assistantMsg.reasoning_content = ''
@@ -823,8 +884,11 @@ export async function* streamCopilotRequest(
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6).trim()
+        // SSE spec: the space after `data:` is optional. OpenAI/Copilot/DeepSeek
+        // send `data: {...}`; Kimi sends `data:{...}`. `.trim()` strips the
+        // optional leading space, so `slice(5)` handles both forms.
+        if (!line.startsWith('data:')) continue
+        const data = line.slice(5).trim()
         if (data === '[DONE]') {
           if (hasStartedContent) {
             yield { type: 'content_block_stop', index: contentIndex - 1 }
@@ -929,7 +993,7 @@ export async function* streamCopilotRequest(
           }
           yield {
             type: 'message_delta',
-            delta: { stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn' },
+            delta: { stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn' },
             usage: { output_tokens: totalOutputTokens },
           }
           yield { type: 'message_stop' }
@@ -1006,6 +1070,15 @@ export function createCopilotFetchOverride(
         ? anthropicBody.max_tokens
         : undefined
 
+    const stop: string | string[] | undefined =
+      Array.isArray(anthropicBody.stop_sequences) && anthropicBody.stop_sequences.length > 0
+        ? anthropicBody.stop_sequences as string[]
+        : undefined
+
+    const copilotToolChoice = openaiTools && openaiTools.length > 0
+      ? (convertToolChoice(anthropicBody.tool_choice) ?? 'auto')
+      : undefined
+
     const copilotResponse = await sendCopilotChatCompletion({
       oauthToken: provider.oauthToken,
       modelId: copilotModelId,
@@ -1014,6 +1087,10 @@ export function createCopilotFetchOverride(
       maxTokens,
       tools: openaiTools,
       signal: init?.signal,
+      stop,
+      toolChoice: copilotToolChoice,
+      ...(typeof anthropicBody.temperature === 'number' ? { temperature: anthropicBody.temperature as number } : {}),
+      ...(typeof anthropicBody.top_p === 'number' ? { top_p: anthropicBody.top_p as number } : {}),
     })
 
     if (!copilotResponse.ok) {
@@ -1027,6 +1104,7 @@ export function createCopilotFetchOverride(
           message: {
             role: string
             content: string | null
+            reasoning_content?: string | null
             tool_calls?: Array<{
               id: string
               function: { name: string; arguments: string }
@@ -1038,7 +1116,13 @@ export function createCopilotFetchOverride(
       }
 
       const choice = data.choices[0]
-      const anthropicContent: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> = []
+      const anthropicContent: Array<{ type: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown }> = []
+
+      // GPT-5 Copilot models may emit reasoning_content (chain-of-thought).
+      // Surface it as an Anthropic thinking block so it renders and round-trips.
+      if (choice?.message?.reasoning_content) {
+        anthropicContent.push({ type: 'thinking', thinking: choice.message.reasoning_content })
+      }
 
       if (choice?.message?.content) {
         anthropicContent.push({ type: 'text', text: choice.message.content })
@@ -1050,7 +1134,7 @@ export function createCopilotFetchOverride(
             type: 'tool_use',
             id: tc.id,
             name: tc.function.name,
-            input: JSON.parse(tc.function.arguments || '{}'),
+            input: (() => { try { return JSON.parse(tc.function.arguments || '{}') } catch { return {} } })(),
           })
         }
       }
@@ -1061,7 +1145,7 @@ export function createCopilotFetchOverride(
         role: 'assistant',
         content: anthropicContent,
         model: copilotModelId,
-        stop_reason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
+        stop_reason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : choice?.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
         usage: {
           input_tokens: data.usage?.prompt_tokens || 0,
           output_tokens: data.usage?.completion_tokens || 0,
@@ -1169,8 +1253,11 @@ export function convertOpenAIStreamToAnthropic(
           buffer = lines.pop() || ''
 
           for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const data = line.slice(6).trim()
+            // SSE spec: the space after `data:` is optional. OpenAI/Copilot/
+            // DeepSeek send `data: {...}`; Kimi sends `data:{...}`. `.trim()`
+            // strips the optional leading space, so `slice(5)` handles both.
+            if (!line.startsWith('data:')) continue
+            const data = line.slice(5).trim()
             if (data === '[DONE]') {
               closeReasoning()
               if (hasStartedText) {
@@ -1373,7 +1460,7 @@ export function convertOpenAIStreamToAnthropic(
               emitEvent({
                 type: 'message_delta',
                 delta: {
-                  stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
+                  stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
                 },
                 usage: finalUsage(),
               })

@@ -4,6 +4,7 @@ import { BYTES_PER_TOKEN } from '../../constants/toolLimits.js'
 import {
   convertAnthropicMessagesToOpenAI,
   convertAnthropicToolsToOpenAI,
+  convertToolChoice,
   convertOpenAIStreamToAnthropic,
   type AnthropicMessage,
 } from './copilotClient.js'
@@ -17,30 +18,6 @@ import {
 import { stringifyJsonTransport } from './jsonTransport.js'
 
 const PREFIX = 'custom-openai:'
-
-/** Anthropic `tool_choice` → OpenAI `tool_choice`. */
-function convertToolChoice(
-  toolChoice: unknown,
-): 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } } | undefined {
-  if (!toolChoice || typeof toolChoice !== 'object') {
-    return undefined
-  }
-  const tc = toolChoice as { type?: string; name?: string }
-  switch (tc.type) {
-    case 'auto':
-      return 'auto'
-    case 'any':
-      return 'required'
-    case 'none':
-      return 'none'
-    case 'tool':
-      return tc.name
-        ? { type: 'function', function: { name: tc.name } }
-        : 'required'
-    default:
-      return undefined
-  }
-}
 
 /**
  * Rough input-token estimate (chars / BYTES_PER_TOKEN) for the `/count_tokens`
@@ -138,6 +115,20 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/$/, '')
 }
 
+/**
+ * Check if the model requires `max_completion_tokens` instead of `max_tokens`.
+ * `o1`/`o3`/`o4` reasoning models and `gpt-5` variants enforce this.
+ */
+function requiresMaxCompletionTokens(modelId: string): boolean {
+  const m = modelId.toLowerCase()
+  return (
+    m.startsWith('o1') ||
+    m.startsWith('o3') ||
+    m.startsWith('o4-mini') ||
+    m.startsWith('gpt-5')
+  )
+}
+
 /** Whether this provider is DeepSeek (host `*.deepseek.com` or a `deepseek*` model). */
 export function isDeepSeekProvider(baseUrl: string | undefined, modelId: string): boolean {
   if (baseUrl) {
@@ -151,6 +142,25 @@ export function isDeepSeekProvider(baseUrl: string | undefined, modelId: string)
     }
   }
   return modelId.toLowerCase().includes('deepseek')
+}
+
+/**
+ * Whether this provider is Kimi (host `*.kimi.com` or a `kimi*` model).
+ * Kimi runs a thinking mode by default and requires `reasoning_content` to be
+ * echoed back on assistant tool-call turns (otherwise it 400s on the round-trip).
+ */
+export function isKimiProvider(baseUrl: string | undefined, modelId: string): boolean {
+  if (baseUrl) {
+    try {
+      const host = new URL(normalizeBaseUrl(baseUrl)).hostname.toLowerCase()
+      if (host === 'kimi.com' || host.endsWith('.kimi.com')) {
+        return true
+      }
+    } catch {
+      // fall through to model-name check
+    }
+  }
+  return modelId.toLowerCase().includes('kimi')
 }
 
 /** Whether the configured base points at DeepSeek's `/beta` endpoint (where strict mode lives). */
@@ -329,6 +339,7 @@ export function createCustomOpenAIFetchOverride(
 
   const openaiModelId = getCustomOpenAIModelId(model)
   const deepseek = isDeepSeekProvider(provider.baseUrl, openaiModelId)
+  const kimi = isKimiProvider(provider.baseUrl, openaiModelId)
   // Strict tool mode is a DeepSeek beta feature — opt in by connecting to the
   // `/beta` endpoint. It tightens function schemas so argument JSON adheres exactly.
   const useStrictTools = deepseek && isDeepSeekBetaBase(provider.baseUrl)
@@ -381,7 +392,7 @@ export function createCustomOpenAIFetchOverride(
     }
 
     const anthropicMessages = (anthropicBody.messages || []) as AnthropicMessage[]
-    let openaiMessages = convertAnthropicMessagesToOpenAI(anthropicMessages, systemPrompt, { deepseek, model: openaiModelId })
+    let openaiMessages = convertAnthropicMessagesToOpenAI(anthropicMessages, systemPrompt, { deepseek, model: openaiModelId, requiresReasoningContent: kimi })
 
     const anthropicTools = (anthropicBody.tools || []) as Array<{
       name: string
@@ -453,8 +464,14 @@ export function createCustomOpenAIFetchOverride(
       requestBody.stream_options = { include_usage: true }
     }
 
+    // Some OpenAI-compatible models (o1, o3, o4-mini, gpt-5) require
+    // `max_completion_tokens` instead of `max_tokens`.
     if (anthropicBody.max_tokens) {
-      requestBody.max_tokens = anthropicBody.max_tokens
+      if (requiresMaxCompletionTokens(openaiModelId)) {
+        requestBody.max_completion_tokens = anthropicBody.max_tokens
+      } else {
+        requestBody.max_tokens = anthropicBody.max_tokens
+      }
     }
 
     // Pass through sampling parameters when the caller set them.
@@ -555,7 +572,7 @@ export function createCustomOpenAIFetchOverride(
             type: 'tool_use',
             id: tc.id,
             name: tc.function.name,
-            input: JSON.parse(tc.function.arguments || '{}'),
+            input: (() => { try { return JSON.parse(tc.function.arguments || '{}') } catch { return {} } })(),
           })
         }
       }
@@ -591,7 +608,7 @@ export function createCustomOpenAIFetchOverride(
         role: 'assistant',
         content: anthropicContent,
         model: openaiModelId,
-        stop_reason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
+        stop_reason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : choice?.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
         usage: {
           input_tokens: inputTokens,
           output_tokens: data.usage?.completion_tokens || 0,
