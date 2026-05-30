@@ -1,5 +1,6 @@
 import { hasConnectedProviderCredentials } from '../../utils/connectedProviders.js'
 import { getGlobalConfig, saveGlobalConfig, type ConnectedProviderInfo } from '../../utils/config.js'
+import { logForDebugging } from '../../utils/debug.js'
 
 const COPILOT_API_BASE = 'https://api.githubcopilot.com'
 const MODELS_DEV_URL = 'https://models.dev/api.json'
@@ -1134,7 +1135,17 @@ export function createCopilotFetchOverride(
             type: 'tool_use',
             id: tc.id,
             name: tc.function.name,
-            input: (() => { try { return JSON.parse(tc.function.arguments || '{}') } catch { return {} } })(),
+            input: (() => {
+              try {
+                return JSON.parse(tc.function.arguments || '{}')
+              } catch (err) {
+                logForDebugging(
+                  `tool_call "${tc.function.name}" arguments JSON parse failed (${(err as Error).message}); falling back to {}. raw=${(tc.function.arguments || '').slice(0, 500)}`,
+                  { level: 'error' },
+                )
+                return {}
+              }
+            })(),
           })
         }
       }

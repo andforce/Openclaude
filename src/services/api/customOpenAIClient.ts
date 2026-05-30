@@ -1,5 +1,6 @@
 import { hasConnectedProviderCredentials } from '../../utils/connectedProviders.js'
 import { getGlobalConfig, type ConnectedProviderInfo } from '../../utils/config.js'
+import { logForDebugging } from '../../utils/debug.js'
 import {
   CUSTOM_OPENAI_PROVIDER_ID,
   getCustomOpenAIProviderById,
@@ -596,7 +597,17 @@ export function createCustomOpenAIFetchOverride(
             type: 'tool_use',
             id: tc.id,
             name: tc.function.name,
-            input: (() => { try { return JSON.parse(tc.function.arguments || '{}') } catch { return {} } })(),
+            input: (() => {
+              try {
+                return JSON.parse(tc.function.arguments || '{}')
+              } catch (err) {
+                logForDebugging(
+                  `tool_call "${tc.function.name}" arguments JSON parse failed (${(err as Error).message}); falling back to {}. raw=${(tc.function.arguments || '').slice(0, 500)}`,
+                  { level: 'error' },
+                )
+                return {}
+              }
+            })(),
           })
         }
       }

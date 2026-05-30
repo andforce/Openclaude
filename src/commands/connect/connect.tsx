@@ -1244,39 +1244,33 @@ function ConnectDialog({
             baseUrl={st.baseUrl}
             models={st.models}
             onSelect={modelId => {
-              saveGlobalConfig(current => {
-                const providerId = resolveCustomOpenAIProviderId(
-                  current,
-                  st.baseUrl || '',
-                )
-                const models = st.models.map(id => ({ id }))
-                return {
-                  ...current,
-                  connectedProviders: {
-                    ...(current.connectedProviders || {}),
-                    [providerId]: {
-                      baseUrl: st.baseUrl || '',
-                      defaultModel: modelId,
-                      ...(st.apiKey ? { apiKey: st.apiKey } : {}),
-                      connectedAt: new Date().toISOString(),
-                    },
-                  },
-                  activeProvider: providerId,
-                  openaiCustomModelsCaches: {
-                    ...(current.openaiCustomModelsCaches || {}),
-                    [providerId]: models,
-                  },
-                  ...(providerId === CUSTOM_OPENAI_PROVIDER_ID
-                    ? { openaiCustomModelsCache: models }
-                    : {}),
-                }
-              })
-              onChangeAPIKey()
-              onProviderActivated()
               const providerId = resolveCustomOpenAIProviderId(
                 getGlobalConfig(),
                 st.baseUrl || '',
               )
+              const models = st.models.map(id => ({ id }))
+              saveGlobalConfig(current => ({
+                ...current,
+                connectedProviders: {
+                  ...(current.connectedProviders || {}),
+                  [providerId]: {
+                    baseUrl: st.baseUrl || '',
+                    defaultModel: modelId,
+                    ...(st.apiKey ? { apiKey: st.apiKey } : {}),
+                    connectedAt: new Date().toISOString(),
+                  },
+                },
+                activeProvider: providerId,
+                openaiCustomModelsCaches: {
+                  ...(current.openaiCustomModelsCaches || {}),
+                  [providerId]: models,
+                },
+                ...(providerId === CUSTOM_OPENAI_PROVIDER_ID
+                  ? { openaiCustomModelsCache: models }
+                  : {}),
+              }))
+              onChangeAPIKey()
+              onProviderActivated()
               setStep({ type: 'success', providerId })
             }}
             onCancel={handleCancel}
