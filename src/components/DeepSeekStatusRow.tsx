@@ -8,13 +8,15 @@ import { getAggregateCacheHitRatio } from '../services/api/cacheDiagnostics.js'
 import {
   type DeepSeekBalance,
   fetchDeepSeekBalance,
-  isDeepSeekOfficialActive,
+  isDeepSeekOfficialBaseUrl,
 } from '../services/api/deepseekBalance.js'
+import { getCustomOpenAIProvider } from '../services/api/customOpenAIClient.js'
 import type { Message } from '../types/message.js'
 import {
   calculateContextPercentages,
   getContextWindowForModel,
 } from '../utils/context.js'
+import { parseOpenAICompatibleModelValue } from '../utils/customOpenAIProviders.js'
 import { calculateCostFromTokens } from '../utils/modelCost.js'
 import { getCurrentUsage } from '../utils/tokens.js'
 
@@ -67,9 +69,15 @@ function DeepSeekStatusRowInner({
   const { columns } = useTerminalSize()
   const balance = useDeepSeekBalance(lastAssistantMessageId)
 
-  // Self-gate: render only on the official DeepSeek base URL. Hooks above run
-  // unconditionally (rules of hooks); the balance fetch no-ops off-DeepSeek.
-  if (!isDeepSeekOfficialActive()) {
+  // Self-gate: render only when the current model's provider base URL is the
+  // official DeepSeek endpoint. Hooks above run unconditionally (rules of hooks);
+  // the balance fetch no-ops off-DeepSeek.
+  const ref = parseOpenAICompatibleModelValue(model)
+  if (!ref) {
+    return null
+  }
+  const provider = getCustomOpenAIProvider(ref.providerId)
+  if (!isDeepSeekOfficialBaseUrl(provider?.baseUrl)) {
     return null
   }
 

@@ -50,6 +50,7 @@ import {
   getCustomOpenAIModels,
   getCustomOpenAIProviderById,
   isCustomOpenAIProviderId,
+  parseOpenAICompatibleModelValue,
 } from '../customOpenAIProviders.js'
 
 export type ModelShortName = string
@@ -131,9 +132,14 @@ export function getUsableModelSetting(model: ModelSetting): ModelSetting {
 
 function isStaleConnectedProviderModelSetting(model: string): boolean {
   const config = getGlobalConfig()
-  const scoped = parseAnthropicCompatibleModelValue(model)
-  if (scoped) {
-    return !config.connectedProviders?.[scoped.providerId]
+  const anthropicScoped = parseAnthropicCompatibleModelValue(model)
+  if (anthropicScoped) {
+    return !config.connectedProviders?.[anthropicScoped.providerId]
+  }
+
+  const openaiScoped = parseOpenAICompatibleModelValue(model)
+  if (openaiScoped) {
+    return !config.connectedProviders?.[openaiScoped.providerId]
   }
 
   if (isModelAlias(model)) {
