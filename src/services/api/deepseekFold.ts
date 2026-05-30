@@ -1,7 +1,7 @@
 /**
  * DeepSeek KV-cache-aware context fold.
  *
- * When conversation history approaches the DeepSeek context window (128K tokens),
+ * When conversation history approaches the DeepSeek context window (1M tokens),
  * this module folds the oldest messages into a summary to prevent API errors and
  * keep the prefix cache stable. Mirrors Reasonix `src/context-manager.ts`.
  *
@@ -20,6 +20,7 @@
  *    (extending the fold) or when the main loop rewrites history (stale → discard).
  */
 
+import { DEEPSEEK_CONTEXT_TOKENS } from '../../utils/context.js'
 import { logForDebugging } from '../../utils/debug.js'
 import type { OpenAIMessage } from './copilotClient.js'
 import { stringifyJsonTransport } from './jsonTransport.js'
@@ -31,8 +32,9 @@ import { stringifyJsonTransport } from './jsonTransport.js'
 const TURN_START_FOLD_THRESHOLD = 0.90
 /** Stop-loss gate: skip fold if expected head savings < 30% of total. */
 const HISTORY_FOLD_MIN_SAVINGS_FRACTION = 0.30
-/** DeepSeek context window (tokens). */
-const DEEPSEEK_CONTEXT_WINDOW = 128_000
+// DeepSeek context window comes from the shared source of truth in context.ts
+// (DEEPSEEK_CONTEXT_TOKENS = 1M) so fold timing matches /context, the status
+// row, and auto-compact — rather than folding ~8× too early at a stale 128K.
 /** Model used for fold summaries — non-thinking, fast & cheap. */
 const FOLD_SUMMARY_MODEL = 'deepseek-chat'
 /** Fold summary timeout (ms). */
@@ -284,7 +286,7 @@ export async function foldDeepSeekMessagesIfNeeded(
   },
 ): Promise<DeepSeekFoldResult> {
   const threshold = opts?.threshold ?? TURN_START_FOLD_THRESHOLD
-  const maxTokens = Math.floor(DEEPSEEK_CONTEXT_WINDOW * threshold)
+  const maxTokens = Math.floor(DEEPSEEK_CONTEXT_TOKENS * threshold)
 
   // 1) Reuse an existing fold if the original leading prefix is unchanged
   //    (append-only growth). This is what keeps the summary byte-stable.
