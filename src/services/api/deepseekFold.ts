@@ -349,6 +349,27 @@ export async function foldDeepSeekMessagesIfNeeded(
   const toFold = baseMessages.slice(0, foldPoint)
   const toKeep = baseMessages.slice(foldPoint)
 
+  // Truncate the kept tail to fit under the window. Used as a guaranteed-shrink
+  // fallback both when the summary call fails and when a summary comes back too
+  // large to actually reduce the view. Never persisted (non-deterministic), so
+  // the prior foldState is left intact for the next turn.
+  const truncateKeptToFit = (): DeepSeekFoldResult => {
+    let kept = toKeep.length
+    for (let end = toKeep.length - 1; end >= 1; end--) {
+      if (estimateDeepSeekTokens(toKeep.slice(-end), systemPrompt) < maxTokens) {
+        kept = end
+        break
+      }
+    }
+    const truncated = toKeep.slice(-kept)
+    return {
+      messages: truncated,
+      folded: true,
+      foldedCount: 1,
+      messagesRemoved: messages.length - truncated.length,
+    }
+  }
+
   if (toFold.length < 2) {
     logForDebugging(
       `[DEEPSEEK-FOLD] too few messages to fold (${toFold.length})`,
@@ -403,25 +424,25 @@ export async function foldDeepSeekMessagesIfNeeded(
     // error. Do NOT persist this (non-deterministic / non-stable); the prior
     // foldState (if any) is kept so the next turn can retry the extend.
     logForDebugging('[DEEPSEEK-FOLD] summary failed, using truncation fallback', { level: 'warn' })
-    let kept = toKeep.length
-    for (let end = toKeep.length - 1; end >= 1; end--) {
-      const tail = toKeep.slice(-end)
-      if (estimateDeepSeekTokens(tail, systemPrompt) < maxTokens) {
-        kept = end
-        break
-      }
-    }
-    const truncated = toKeep.slice(-kept)
-    return {
-      messages: truncated,
-      folded: true,
-      foldedCount: 1,
-      messagesRemoved: messages.length - truncated.length,
-    }
+    return truncateKeptToFit()
   }
 
   const summaryMessage = buildSummaryMessage(summary, toFold.length, constraints)
   const result = [summaryMessage, ...toKeep]
+  const resultTokens = estimateDeepSeekTokens(result, systemPrompt)
+
+  // Post-fold safety net: a fold must actually shrink the view. The pre-fold
+  // stop-loss gate can only size the folded *head* (the summary doesn't exist
+  // yet); if the summary + re-pinned constraints come back no smaller than what
+  // they replaced (pathological summary output or very large constraints), don't
+  // persist a useless/harmful fold — truncate to fit instead.
+  if (resultTokens >= estimated) {
+    logForDebugging(
+      `[DEEPSEEK-FOLD] summary did not shrink view (${estimated} → ${resultTokens} tokens); truncating instead`,
+      { level: 'warn' },
+    )
+    return truncateKeptToFit()
+  }
 
   // Persist: map the new boundary (an index into baseMessages) back to a count
   // of ORIGINAL messages. baseMessages[0] is the prior summary when reusedFold,
@@ -437,8 +458,7 @@ export async function foldDeepSeekMessagesIfNeeded(
 
   logForDebugging(
     `[DEEPSEEK-FOLD] folded ${toFold.length} messages → summary (${summary.length} chars), ` +
-      `sourceCount=${newSourceCount}, estimated ${estimated} → ` +
-      `~${estimateDeepSeekTokens(result, systemPrompt)} tokens`,
+      `sourceCount=${newSourceCount}, estimated ${estimated} → ~${resultTokens} tokens`,
     { level: 'info' },
   )
 
