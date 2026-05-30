@@ -1,6 +1,10 @@
 import type { AppStateStore } from '../../state/AppState.js'
 import { saveGlobalConfig } from '../../utils/config.js'
 import { resolveCustomAnthropicProviderId } from '../../utils/customAnthropicProviders.js'
+import {
+  CUSTOM_OPENAI_PROVIDER_ID,
+  resolveCustomOpenAIProviderId,
+} from '../../utils/customOpenAIProviders.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isBilledAsExtraUsage } from '../../utils/extraUsage.js'
 import {
@@ -609,7 +613,10 @@ export async function handleTelegramCallback(
         const savedProviderId =
           providerId === 'custom-anthropic'
             ? resolveCustomAnthropicProviderId(current, selection.baseUrl)
-            : providerId
+            : providerId === 'custom-openai'
+              ? resolveCustomOpenAIProviderId(current, selection.baseUrl)
+              : providerId
+        const modelCache = selection.models.map(id => ({ id }))
         return {
           connectedProviders: {
             ...(current.connectedProviders || {}),
@@ -623,18 +630,22 @@ export async function handleTelegramCallback(
           activeProvider: savedProviderId,
           ...(providerId === 'custom-openai'
             ? {
-                openaiCustomModelsCache: selection.models.map(id => ({ id })),
+                openaiCustomModelsCaches: {
+                  ...(current.openaiCustomModelsCaches || {}),
+                  [savedProviderId]: modelCache,
+                },
+                ...(savedProviderId === CUSTOM_OPENAI_PROVIDER_ID
+                  ? { openaiCustomModelsCache: modelCache }
+                  : {}),
               }
             : {
                 anthropicCustomModelsCaches: {
                   ...(current.anthropicCustomModelsCaches || {}),
-                  [savedProviderId]: selection.models.map(id => ({ id })),
+                  [savedProviderId]: modelCache,
                 },
                 ...(savedProviderId === 'custom-anthropic'
                   ? {
-                      anthropicCustomModelsCache: selection.models.map(id => ({
-                        id,
-                      })),
+                      anthropicCustomModelsCache: modelCache,
                     }
                   : {}),
               }),

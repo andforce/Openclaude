@@ -607,8 +607,10 @@ export type GlobalConfig = {
   kimiModelsCache?: Array<{ id: string; owned_by?: string }>
   /** From GET /v1/models after OpenRouter Anthropic-compatible login */
   openrouterModelsCache?: Array<{ id: string }>
-  /** From GET /v1/models after Custom OpenAI-compatible login */
+  /** @deprecated Legacy single Custom OpenAI-compatible cache. Use openaiCustomModelsCaches. */
   openaiCustomModelsCache?: Array<{ id: string }>
+  /** From GET /v1/models after Custom OpenAI-compatible login, keyed by provider id. */
+  openaiCustomModelsCaches?: Record<string, Array<{ id: string }>>
 
   /** @deprecated Legacy single Custom Anthropic-compatible cache. Use anthropicCustomModelsCaches. */
   anthropicCustomModelsCache?: Array<{ id: string }>

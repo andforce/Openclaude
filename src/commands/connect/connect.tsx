@@ -19,6 +19,12 @@ import {
   isCustomAnthropicProviderId,
   resolveCustomAnthropicProviderId,
 } from '../../utils/customAnthropicProviders.js'
+import {
+  CUSTOM_OPENAI_PROVIDER_ID,
+  getCustomOpenAIProviderLabel,
+  isCustomOpenAIProviderId,
+  resolveCustomOpenAIProviderId,
+} from '../../utils/customOpenAIProviders.js'
 import { clearUserSpecifiedModelSetting } from '../../utils/model/model.js'
 
 const COPILOT_CLIENT_ID = 'Ov23li8tweQw6odWQebz'
@@ -379,8 +385,11 @@ function SuccessDialog({
   const providerName =
     providerId === 'github-copilot'
       ? 'GitHub Copilot'
-      : providerId === 'custom-openai'
-        ? 'Custom OpenAI-compatible API'
+      : isCustomOpenAIProviderId(providerId)
+        ? getCustomOpenAIProviderLabel(
+            providerId,
+            getGlobalConfig().connectedProviders?.[providerId],
+          )
         : isCustomAnthropicProviderId(providerId)
           ? getCustomAnthropicProviderLabel(
               providerId,
@@ -1235,23 +1244,40 @@ function ConnectDialog({
             baseUrl={st.baseUrl}
             models={st.models}
             onSelect={modelId => {
-              saveGlobalConfig(current => ({
-                ...current,
-                connectedProviders: {
-                  ...(current.connectedProviders || {}),
-                  'custom-openai': {
-                    baseUrl: st.baseUrl || '',
-                    defaultModel: modelId,
-                    ...(st.apiKey ? { apiKey: st.apiKey } : {}),
-                    connectedAt: new Date().toISOString(),
+              saveGlobalConfig(current => {
+                const providerId = resolveCustomOpenAIProviderId(
+                  current,
+                  st.baseUrl || '',
+                )
+                const models = st.models.map(id => ({ id }))
+                return {
+                  ...current,
+                  connectedProviders: {
+                    ...(current.connectedProviders || {}),
+                    [providerId]: {
+                      baseUrl: st.baseUrl || '',
+                      defaultModel: modelId,
+                      ...(st.apiKey ? { apiKey: st.apiKey } : {}),
+                      connectedAt: new Date().toISOString(),
+                    },
                   },
-                },
-                activeProvider: 'custom-openai',
-                openaiCustomModelsCache: st.models.map(id => ({ id })),
-              }))
+                  activeProvider: providerId,
+                  openaiCustomModelsCaches: {
+                    ...(current.openaiCustomModelsCaches || {}),
+                    [providerId]: models,
+                  },
+                  ...(providerId === CUSTOM_OPENAI_PROVIDER_ID
+                    ? { openaiCustomModelsCache: models }
+                    : {}),
+                }
+              })
               onChangeAPIKey()
               onProviderActivated()
-              setStep({ type: 'success', providerId: 'custom-openai' })
+              const providerId = resolveCustomOpenAIProviderId(
+                getGlobalConfig(),
+                st.baseUrl || '',
+              )
+              setStep({ type: 'success', providerId })
             }}
             onCancel={handleCancel}
           />

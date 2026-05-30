@@ -26,6 +26,12 @@ import {
   isCustomAnthropicProviderId,
   parseAnthropicCompatibleModelValue,
 } from '../../utils/customAnthropicProviders.js'
+import {
+  CUSTOM_OPENAI_PROVIDER_ID,
+  getCustomOpenAIProviderLabel,
+  isCustomOpenAIProviderId,
+  parseOpenAICompatibleModelValue,
+} from '../../utils/customOpenAIProviders.js'
 import { stripSignatureBlocks } from '../../utils/messages.js'
 import {
   clearUserSpecifiedModelSetting,
@@ -70,6 +76,12 @@ type DisconnectStep =
   | { type: 'error'; error: string }
 
 function getProviderLabel(providerId: string): string {
+  if (isCustomOpenAIProviderId(providerId)) {
+    return getCustomOpenAIProviderLabel(
+      providerId,
+      getGlobalConfig().connectedProviders?.[providerId],
+    )
+  }
   if (isCustomAnthropicProviderId(providerId)) {
     return getCustomAnthropicProviderLabel(
       providerId,
@@ -99,6 +111,11 @@ function isModelOwnedByProvider(
 ): boolean {
   if (!model) {
     return false
+  }
+
+  const scopedOpenAIModel = parseOpenAICompatibleModelValue(model)
+  if (scopedOpenAIModel) {
+    return scopedOpenAIModel.providerId === providerId
   }
 
   const scopedModel = parseAnthropicCompatibleModelValue(model)
@@ -298,6 +315,21 @@ function DisconnectDialog({
               : undefined
         }
 
+        let openaiCustomModelsCaches = current.openaiCustomModelsCaches
+        if (
+          isCustomOpenAIProviderId(step.provider.providerId) &&
+          current.openaiCustomModelsCaches
+        ) {
+          const {
+            [step.provider.providerId]: _removedOpenAICache,
+            ...remainingOpenAICaches
+          } = current.openaiCustomModelsCaches
+          openaiCustomModelsCaches =
+            Object.keys(remainingOpenAICaches).length > 0
+              ? remainingOpenAICaches
+              : undefined
+        }
+
         return {
           ...current,
           connectedProviders:
@@ -312,8 +344,13 @@ function DisconnectDialog({
           ...(step.provider.providerId === 'openrouter'
             ? { openrouterModelsCache: undefined }
             : {}),
-          ...(step.provider.providerId === 'custom-openai'
-            ? { openaiCustomModelsCache: undefined }
+          ...(isCustomOpenAIProviderId(step.provider.providerId)
+            ? {
+                openaiCustomModelsCaches,
+                ...(step.provider.providerId === CUSTOM_OPENAI_PROVIDER_ID
+                  ? { openaiCustomModelsCache: undefined }
+                  : {}),
+              }
             : {}),
           ...(isCustomAnthropicProviderId(step.provider.providerId)
             ? {

@@ -4,12 +4,16 @@ import {
   type GlobalConfig,
 } from './config.js'
 import { isCustomAnthropicProviderId } from './customAnthropicProviders.js'
+import { isCustomOpenAIProviderId } from './customOpenAIProviders.js'
 
 function hasRequiredProviderFields(
   providerId: string,
   provider: ConnectedProviderInfo | undefined,
 ): boolean {
   if (isCustomAnthropicProviderId(providerId)) {
+    return !!provider?.baseUrl
+  }
+  if (isCustomOpenAIProviderId(providerId)) {
     return !!provider?.baseUrl
   }
 
@@ -19,8 +23,6 @@ function hasRequiredProviderFields(
     case 'openrouter':
     case 'kimi-for-coding':
       return !!provider?.apiKey
-    case 'custom-openai':
-      return !!provider?.baseUrl
     default:
       return !!(
         provider?.apiKey ||

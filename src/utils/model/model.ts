@@ -45,6 +45,12 @@ import {
   isCustomAnthropicProviderId,
   parseAnthropicCompatibleModelValue,
 } from '../customAnthropicProviders.js'
+import {
+  createOpenAICompatibleModelValue,
+  getCustomOpenAIModels,
+  getCustomOpenAIProviderById,
+  isCustomOpenAIProviderId,
+} from '../customOpenAIProviders.js'
 
 export type ModelShortName = string
 export type ModelName = string
@@ -162,8 +168,8 @@ function getConnectedProviderModelIds(providerId: string): Set<string> {
     for (const row of config.openrouterModelsCache ?? []) {
       modelIds.add(row.id)
     }
-  } else if (providerId === 'custom-openai') {
-    for (const row of config.openaiCustomModelsCache ?? []) {
+  } else if (isCustomOpenAIProviderId(providerId)) {
+    for (const row of getCustomOpenAIModels(config, providerId) ?? []) {
       modelIds.add(row.id)
     }
   } else if (isCustomAnthropicProviderId(providerId)) {
@@ -278,6 +284,16 @@ function getActiveProviderDefaultModelSetting(): ModelName | undefined {
     return modelId
   }
 
+  if (isCustomOpenAIProviderId(config.activeProvider)) {
+    const provider = getCustomOpenAIProviderById(config, config.activeProvider)
+    const modelId =
+      provider?.defaultModel ?? getCustomOpenAIModels(config)?.[0]?.id
+    if (!provider?.baseUrl || !modelId) {
+      return undefined
+    }
+    return createOpenAICompatibleModelValue(config.activeProvider, modelId)
+  }
+
   switch (config.activeProvider) {
     case 'kimi-for-coding': {
       const provider = config.connectedProviders?.['kimi-for-coding']
@@ -302,15 +318,6 @@ function getActiveProviderDefaultModelSetting(): ModelName | undefined {
         return undefined
       }
       return modelId
-    }
-    case 'custom-openai': {
-      const provider = config.connectedProviders?.['custom-openai']
-      const modelId =
-        provider?.defaultModel ?? config.openaiCustomModelsCache?.[0]?.id
-      if (!provider?.baseUrl || !modelId) {
-        return undefined
-      }
-      return `custom-openai:${modelId}`
     }
     default:
       return undefined

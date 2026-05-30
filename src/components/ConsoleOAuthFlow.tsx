@@ -15,6 +15,10 @@ import { logError } from '../utils/log.js';
 import { getSettings_DEPRECATED } from '../utils/settings/settings.js';
 import { saveGlobalConfig } from '../utils/config.js';
 import { resolveCustomAnthropicProviderId } from '../utils/customAnthropicProviders.js';
+import {
+  CUSTOM_OPENAI_PROVIDER_ID,
+  resolveCustomOpenAIProviderId,
+} from '../utils/customOpenAIProviders.js';
 import { fetchCopilotModels } from '../services/api/copilotClient.js';
 import { fetchOpenAICompatibleModelIds, fetchAnthropicCompatibleModelIds, fetchOpenRouterAnthropicModelIds } from '../services/api/customOpenAIClient.js';
 import { Select } from './CustomSelect/select.js';
@@ -1184,21 +1188,33 @@ function OAuthStatusMessage(t0) {
             }} onSelect={modelId => {
               saveGlobalConfig(current => ({
                 ...current,
-                connectedProviders: {
-                  ...(current.connectedProviders || {}),
-                  "custom-openai": {
-                    baseUrl: st.baseUrl || "",
-                    defaultModel: modelId,
-                    ...(st.apiKey ? {
-                      apiKey: st.apiKey
-                    } : {}),
-                    connectedAt: new Date().toISOString()
-                  }
-                },
-                activeProvider: "custom-openai",
-                openaiCustomModelsCache: st.models.map(id => ({
-                  id
-                }))
+                ...(() => {
+                  const providerId = resolveCustomOpenAIProviderId(current, st.baseUrl || "");
+                  const models = st.models.map(id => ({
+                    id
+                  }));
+                  return {
+                    connectedProviders: {
+                      ...(current.connectedProviders || {}),
+                      [providerId]: {
+                        baseUrl: st.baseUrl || "",
+                        defaultModel: modelId,
+                        ...(st.apiKey ? {
+                          apiKey: st.apiKey
+                        } : {}),
+                        connectedAt: new Date().toISOString()
+                      }
+                    },
+                    activeProvider: providerId,
+                    openaiCustomModelsCaches: {
+                      ...(current.openaiCustomModelsCaches || {}),
+                      [providerId]: models
+                    },
+                    ...(providerId === CUSTOM_OPENAI_PROVIDER_ID ? {
+                      openaiCustomModelsCache: models
+                    } : {})
+                  };
+                })()
               }));
               setOAuthStatus({
                 state: "success"

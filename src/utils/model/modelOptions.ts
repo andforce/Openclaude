@@ -44,7 +44,13 @@ import {
   parseAnthropicCompatibleModelValue,
 } from '../customAnthropicProviders.js'
 import { isCopilotConnected, getCopilotModelsCached } from '../../services/api/copilotClient.js'
-import { isCustomOpenAIConnected, getCustomOpenAIProvider } from '../../services/api/customOpenAIClient.js'
+import {
+  createOpenAICompatibleModelValue,
+  getCustomOpenAIModels,
+  getCustomOpenAIProviderById,
+  getCustomOpenAIProviderLabel,
+  isCustomOpenAIProviderId,
+} from '../customOpenAIProviders.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
 
@@ -69,6 +75,17 @@ function getActiveProviderDefaultDescription(): string | undefined {
       config.activeProvider,
       customAnthropicProvider,
     )
+    return `Use the active provider's default model (currently [${label}] ${modelId})`
+  }
+
+  if (isCustomOpenAIProviderId(config.activeProvider)) {
+    const provider = getCustomOpenAIProviderById(config, config.activeProvider)
+    const modelId =
+      provider?.defaultModel ?? getCustomOpenAIModels(config)?.[0]?.id
+    if (!provider?.baseUrl || !modelId) {
+      return undefined
+    }
+    const label = getCustomOpenAIProviderLabel(config.activeProvider, provider)
     return `Use the active provider's default model (currently [${label}] ${modelId})`
   }
 
@@ -98,15 +115,6 @@ function getActiveProviderDefaultDescription(): string | undefined {
       }
       return `Use the active provider's default model (currently [OpenRouter] ${modelId})`
     }
-    case 'custom-openai': {
-      const provider = config.connectedProviders?.['custom-openai']
-      const modelId =
-        provider?.defaultModel ?? config.openaiCustomModelsCache?.[0]?.id
-      if (!provider?.baseUrl || !modelId) {
-        return undefined
-      }
-      return `Use the active provider's default model (currently [Custom OpenAI] ${modelId})`
-    }
     default:
       return undefined
   }
@@ -126,6 +134,17 @@ function getActiveProviderDefaultLabel(): string | undefined {
       config.activeProvider,
       customAnthropicProvider,
     )
+    return `[${label}] ${modelId}`
+  }
+
+  if (isCustomOpenAIProviderId(config.activeProvider)) {
+    const provider = getCustomOpenAIProviderById(config, config.activeProvider)
+    const modelId =
+      provider?.defaultModel ?? getCustomOpenAIModels(config)?.[0]?.id
+    if (!provider?.baseUrl || !modelId) {
+      return undefined
+    }
+    const label = getCustomOpenAIProviderLabel(config.activeProvider, provider)
     return `[${label}] ${modelId}`
   }
 
@@ -154,15 +173,6 @@ function getActiveProviderDefaultLabel(): string | undefined {
         return undefined
       }
       return `[OpenRouter] ${modelId}`
-    }
-    case 'custom-openai': {
-      const provider = config.connectedProviders?.['custom-openai']
-      const modelId =
-        provider?.defaultModel ?? config.openaiCustomModelsCache?.[0]?.id
-      if (!provider?.baseUrl || !modelId) {
-        return undefined
-      }
-      return `[Custom OpenAI] ${modelId}`
     }
     default:
       return undefined
@@ -687,33 +697,32 @@ export function getModelOptions(fastMode = false): ModelOption[] {
     }
   }
 
-  // Custom OpenAI-compatible endpoint (models from GET /v1/models at login)
-  if (isCustomOpenAIConnected()) {
-    const p = getCustomOpenAIProvider()
-    const cfg = getGlobalConfig()
-    const list = cfg.openaiCustomModelsCache
-    if (list && list.length > 0) {
-      for (const row of list) {
-        const id = `custom-openai:${row.id}`
-        if (!options.some(existing => existing.value === id)) {
-          options.push({
-            value: id,
-            label: `[Custom OpenAI] ${row.id}`,
-            description: p?.baseUrl
-              ? `OpenAI-compatible · ${p.baseUrl}`
-              : 'OpenAI-compatible custom API',
-          })
-        }
-      }
-    } else if (p?.defaultModel) {
-      const id = `custom-openai:${p.defaultModel}`
-      if (!options.some(existing => existing.value === id)) {
+  // Custom OpenAI-compatible providers (models from GET /v1/models at login).
+  // Multiple endpoints can be connected at once, so list each one.
+  const oaiCfg = getGlobalConfig()
+  for (const [providerId, provider] of Object.entries(
+    oaiCfg.connectedProviders ?? {},
+  )) {
+    if (!isCustomOpenAIProviderId(providerId) || !provider.baseUrl) {
+      continue
+    }
+
+    const label = getCustomOpenAIProviderLabel(providerId, provider)
+    const cache = getCustomOpenAIModels(oaiCfg, providerId) ?? []
+    const models =
+      cache.length > 0
+        ? cache
+        : provider.defaultModel
+          ? [{ id: provider.defaultModel }]
+          : []
+
+    for (const row of models) {
+      const value = createOpenAICompatibleModelValue(providerId, row.id)
+      if (!options.some(existing => existing.value === value)) {
         options.push({
-          value: id,
-          label: `[Custom OpenAI] ${p.defaultModel}`,
-          description: p?.baseUrl
-            ? `OpenAI-compatible · ${p.baseUrl}`
-            : 'OpenAI-compatible custom API',
+          value,
+          label: `[${label}] ${row.id}`,
+          description: `OpenAI-compatible · ${provider.baseUrl}`,
         })
       }
     }

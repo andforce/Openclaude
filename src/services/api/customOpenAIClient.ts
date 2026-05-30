@@ -1,5 +1,11 @@
 import { hasConnectedProviderCredentials } from '../../utils/connectedProviders.js'
 import { getGlobalConfig, type ConnectedProviderInfo } from '../../utils/config.js'
+import {
+  CUSTOM_OPENAI_PROVIDER_ID,
+  getCustomOpenAIProviderById,
+  isCustomOpenAIProviderId,
+  parseOpenAICompatibleModelValue,
+} from '../../utils/customOpenAIProviders.js'
 import { BYTES_PER_TOKEN } from '../../constants/toolLimits.js'
 import {
   convertAnthropicMessagesToOpenAI,
@@ -17,7 +23,17 @@ import {
 } from './deepseekFold.js'
 import { stringifyJsonTransport } from './jsonTransport.js'
 
-const PREFIX = 'custom-openai:'
+/** Resolve which connected custom-openai provider a model value belongs to. */
+function resolveProviderIdForModel(model: string | undefined): string {
+  const cfg = getGlobalConfig()
+  const ref = parseOpenAICompatibleModelValue(model)
+  if (ref) {
+    return ref.providerId
+  }
+  return isCustomOpenAIProviderId(cfg.activeProvider)
+    ? cfg.activeProvider
+    : CUSTOM_OPENAI_PROVIDER_ID
+}
 
 /**
  * Rough input-token estimate (chars / BYTES_PER_TOKEN) for the `/count_tokens`
@@ -87,27 +103,33 @@ function estimateAnthropicInputTokens(body: Record<string, unknown>): number {
 }
 
 export function isCustomOpenAIModel(model: string | undefined): boolean {
-  return !!model?.startsWith(PREFIX)
+  return !!parseOpenAICompatibleModelValue(model)
 }
 
 export function getCustomOpenAIModelId(model: string): string {
-  const rest = model.slice(PREFIX.length).trim()
-  if (rest) {
-    return rest
+  const ref = parseOpenAICompatibleModelValue(model)
+  if (ref?.modelId) {
+    return ref.modelId
   }
-  const p = getGlobalConfig().connectedProviders?.['custom-openai']
+  const p = getCustomOpenAIProvider(resolveProviderIdForModel(model))
   return p?.defaultModel || 'gpt-4o-mini'
 }
 
-export function getCustomOpenAIProvider(): ConnectedProviderInfo | undefined {
-  return getGlobalConfig().connectedProviders?.['custom-openai']
+export function getCustomOpenAIProvider(
+  providerId?: string,
+): ConnectedProviderInfo | undefined {
+  // No id → the active provider (scopes DeepSeek balance to what's in use,
+  // rather than any connected custom-openai endpoint). Returns undefined when
+  // the active provider isn't a custom-openai one.
+  const cfg = getGlobalConfig()
+  return getCustomOpenAIProviderById(cfg, providerId ?? cfg.activeProvider)
 }
 
 export function isCustomOpenAIConnected(): boolean {
   const c = getGlobalConfig()
   return (
-    c.activeProvider === 'custom-openai' &&
-    hasConnectedProviderCredentials('custom-openai', c)
+    isCustomOpenAIProviderId(c.activeProvider) &&
+    hasConnectedProviderCredentials(c.activeProvider, c)
   )
 }
 
@@ -332,7 +354,9 @@ function chatCompletionsUrl(base: string, deepseek = false): string {
 export function createCustomOpenAIFetchOverride(
   model: string,
 ): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
-  const provider = getCustomOpenAIProvider()
+  // Resolve which connected endpoint this model belongs to so multiple
+  // custom-openai providers (e.g. Kimi + DeepSeek) route to the right base URL.
+  const provider = getCustomOpenAIProvider(resolveProviderIdForModel(model))
   if (!provider?.baseUrl) {
     throw new Error('Custom OpenAI-compatible API is not configured')
   }
