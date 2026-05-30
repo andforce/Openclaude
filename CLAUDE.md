@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is **OpenClaude** (v2.1.88) — an independent, rebranded fork of the Claude Code CLI, reconstructed from the `@anthropic-ai/claude-code` npm package source map. The codebase is a TypeScript/React terminal application built with Bun. The shipped binary is `openclaude`, and it stores runtime data (config, sessions, plugins, cache, teams) under `~/.openclaude` by default (override with `OPENCLAUDE_CONFIG_DIR`). README.md is in Chinese and documents the end-user install flow (`install.sh`).
+This is **OpenClaude** (v2.1.88) — an independent, rebranded fork of the Claude Code CLI, reconstructed from the `@anthropic-ai/claude-code` npm package source map. The codebase is a TypeScript/React terminal application built with Bun. The shipped binary is `openclaude` (a thin Node wrapper at `bin/openclaude.cjs` that loads `dist/cli.js`), and it stores runtime data (config, sessions, plugins, cache, teams) under `~/.openclaude` by default (override with `OPENCLAUDE_CONFIG_DIR`). README.md is in Chinese and documents the end-user install flow (`install.sh`).
 
 ## Build System
 
@@ -60,6 +60,10 @@ The build is configured in `build.ts`:
 - `MACRO.VERSION` - Version string ("2.1.88")
 - `MACRO.BUILD_TIME` - ISO build timestamp
 - `MACRO.ISSUES_EXPLAINER` - Support URL
+- `MACRO.FEEDBACK_CHANNEL` - Feedback URL
+- `MACRO.PACKAGE_URL` / `MACRO.NATIVE_PACKAGE_URL` - npm package URL
+- `MACRO.VERSION_CHANGELOG` - Changelog URL
+- `Bun.env.NODE_ENV` - Set to `"production"`
 
 ## Architecture
 
@@ -94,6 +98,37 @@ src/
 └── vendor/          # Internal vendor code
 ```
 
+### Provider Architecture
+
+OpenClaude supports multiple AI providers beyond the Anthropic first-party API. Provider selection is managed via `/connect` and `/disconnect` slash commands, with credentials stored in the global config (`connectedProviders`).
+
+**Provider types and model value prefixes:**
+
+| Provider | Model prefix | Protocol |
+|---|---|---|
+| Anthropic first-party | (no prefix) | Native Anthropic Messages API |
+| GitHub Copilot | `copilot:` | OpenAI-compatible chat completions |
+| OpenRouter | `openrouter:` | Anthropic-compatible API |
+| Custom OpenAI-compatible | `custom-openai:`, `openai-compatible:` | OpenAI chat completions |
+| Custom Anthropic-compatible | `anthropic-compatible:` | Anthropic Messages API |
+
+**Anthropic-to-OpenAI protocol bridge** (`src/services/api/copilotClient.ts`): Shared by Copilot and Custom OpenAI paths. Converts Anthropic messages, tools, tool_choice, and streaming responses to/from OpenAI chat completions format. The bridge is reused by `customOpenAIClient.ts` for all OpenAI-compatible providers.
+
+**Multi-provider routing for custom-openai** (`src/utils/customOpenAIProviders.ts`): Multiple OpenAI-compatible endpoints can be connected simultaneously. The first uses the legacy `custom-openai` provider ID; additional endpoints get slug-scoped IDs (`custom-openai:<host-slug>`). Model values are `openai-compatible:<providerId>:<model>` (or `custom-openai:<model>` for the legacy single-provider format).
+
+**Provider-specific features in `customOpenAIClient.ts`:**
+- **DeepSeek**: context folding via `deepseekFold.ts` (summarizes oldest messages to stay under 128K window), strict tool mode (requires `additionalProperties: false`, nullable optionals), tool schema canonicalization for prefix cache stability, and `stream_options.include_usage` for correct cache billing in streaming responses.
+- **Kimi**: requires `reasoning_content` echoed back on assistant tool-call turns (otherwise the API 400s on the round-trip).
+- **Generic OpenAI**: `max_completion_tokens` vs `max_tokens` switching for o1/o3/o4/gpt-5 reasoning models.
+
+**Model resolution** (`src/utils/model/`):
+- `model.ts` — canonical model names, default model selection, pricing
+- `modelOptions.ts` — builds the `/model` command's selector list across all connected providers
+- `providers.ts` — first-party API provider detection (bedrock/vertex/foundry/firstParty)
+- `modelSupportOverrides.ts` — per-model capability overrides (e.g., parallel tool calls, image support)
+
+**Client creation** (`src/services/api/client.ts`): The central `createAnthropicClient()` factory resolves which provider to use based on the model prefix and builds the appropriate SDK client or fetch-override (for non-Anthropic providers).
+
 ### Core Concepts
 
 **Tool System** (`src/Tool.ts`):
@@ -116,6 +151,11 @@ src/
 - Centralized React-like state using immutable updates
 - `setAppState()` for updates, `getAppState()` for reads
 - Persisted to disk for session recovery
+
+**Skills System** (`src/skills/`):
+- Bundled skills shipped with the CLI (`src/skills/bundled/`)
+- MCP skill builders (`mcpSkillBuilders.ts`) bridge MCP tools into the skill registry
+- Skills are invoked via the Skill tool at runtime
 
 ### Technology Stack
 
