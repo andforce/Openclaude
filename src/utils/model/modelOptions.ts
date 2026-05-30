@@ -39,7 +39,6 @@ import {
   getAnthropicCompatibleModelId,
   getCustomAnthropicModels,
   getCustomAnthropicProvider,
-  getCustomAnthropicProviderLabel,
   isCustomAnthropicProviderId,
   parseAnthropicCompatibleModelValue,
 } from '../customAnthropicProviders.js'
@@ -48,7 +47,6 @@ import {
   createOpenAICompatibleModelValue,
   getCustomOpenAIModels,
   getCustomOpenAIProviderById,
-  getCustomOpenAIProviderLabel,
   isCustomOpenAIProviderId,
 } from '../customOpenAIProviders.js'
 
@@ -71,11 +69,7 @@ function getActiveProviderDefaultDescription(): string | undefined {
     if (!customAnthropicProvider.baseUrl || !modelId) {
       return undefined
     }
-    const label = getCustomAnthropicProviderLabel(
-      config.activeProvider,
-      customAnthropicProvider,
-    )
-    return `Use the active provider's default model (currently [${label}] ${modelId})`
+    return `Use the active provider's default model (currently [Custom Anthropic] ${modelId})`
   }
 
   if (isCustomOpenAIProviderId(config.activeProvider)) {
@@ -85,8 +79,7 @@ function getActiveProviderDefaultDescription(): string | undefined {
     if (!provider?.baseUrl || !modelId) {
       return undefined
     }
-    const label = getCustomOpenAIProviderLabel(config.activeProvider, provider)
-    return `Use the active provider's default model (currently [${label}] ${modelId})`
+    return `Use the active provider's default model (currently [Custom OpenAI] ${modelId})`
   }
 
   switch (config.activeProvider) {
@@ -130,11 +123,7 @@ function getActiveProviderDefaultLabel(): string | undefined {
     if (!customAnthropicProvider.baseUrl || !modelId) {
       return undefined
     }
-    const label = getCustomAnthropicProviderLabel(
-      config.activeProvider,
-      customAnthropicProvider,
-    )
-    return `[${label}] ${modelId}`
+    return `[Custom Anthropic] ${modelId}`
   }
 
   if (isCustomOpenAIProviderId(config.activeProvider)) {
@@ -144,8 +133,7 @@ function getActiveProviderDefaultLabel(): string | undefined {
     if (!provider?.baseUrl || !modelId) {
       return undefined
     }
-    const label = getCustomOpenAIProviderLabel(config.activeProvider, provider)
-    return `[${label}] ${modelId}`
+    return `[Custom OpenAI] ${modelId}`
   }
 
   switch (config.activeProvider) {
@@ -707,7 +695,6 @@ export function getModelOptions(fastMode = false): ModelOption[] {
       continue
     }
 
-    const label = getCustomOpenAIProviderLabel(providerId, provider)
     const cache = getCustomOpenAIModels(oaiCfg, providerId) ?? []
     const models =
       cache.length > 0
@@ -721,8 +708,8 @@ export function getModelOptions(fastMode = false): ModelOption[] {
       if (!options.some(existing => existing.value === value)) {
         options.push({
           value,
-          label: `[${label}] ${row.id}`,
-          description: `OpenAI-compatible · ${provider.baseUrl}`,
+          label: `[Custom OpenAI] ${row.id}`,
+          description: provider.baseUrl,
         })
       }
     }
@@ -737,7 +724,6 @@ export function getModelOptions(fastMode = false): ModelOption[] {
       continue
     }
 
-    const label = getCustomAnthropicProviderLabel(providerId, provider)
     const cache = getCustomAnthropicModels(gCfg, providerId) ?? []
     const models =
       cache.length > 0
@@ -751,8 +737,8 @@ export function getModelOptions(fastMode = false): ModelOption[] {
       if (!options.some(existing => existing.value === value)) {
         options.push({
           value,
-          label: `[${label}] ${row.id}`,
-          description: `Anthropic-compatible · ${provider.baseUrl}`,
+          label: `[Custom Anthropic] ${row.id}`,
+          description: provider.baseUrl,
         })
       }
     }
