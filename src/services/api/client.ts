@@ -398,16 +398,26 @@ export async function getAnthropicClient({
     return new Anthropic(customAnthropicConfig)
   }
 
-  // Kimi Code: use Anthropic-compatible API at api.kimi.com/coding/
+  // Kimi Code: use the OpenAI-compatible bridge. Kimi Code speaks OpenAI Chat
+  // Completions format (https://api.kimi.com/coding/v1/chat/completions), not
+  // Anthropic Messages format. Routing through createCustomOpenAIFetchOverride
+  // converts the request body and maps the response correctly.
   const kimiProvider = globalCfg.connectedProviders?.['kimi-for-coding']
   if (globalCfg.activeProvider === 'kimi-for-coding' && kimiProvider?.apiKey) {
-    const kimiConfig: ConstructorParameters<typeof Anthropic>[0] = {
-      apiKey: kimiProvider.apiKey,
-      baseURL: 'https://api.kimi.com/coding/',
+    const kimiModelId =
+      kimiProvider.defaultModel ??
+      globalCfg.kimiModelsCache?.[0]?.id ??
+      'kimi-for-coding'
+    const kimiFetch = createCustomOpenAIFetchOverride(
+      `custom-openai:${kimiModelId}`,
+    )
+    const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
+      apiKey: 'copilot-placeholder-key',
       ...ARGS,
       ...(isDebugToStdErr() && { logger: createStderrLogger() }),
+      fetch: buildFetch(kimiFetch, source),
     }
-    return new Anthropic(kimiConfig)
+    return new Anthropic(clientConfig)
   }
 
   // Determine authentication method based on available tokens

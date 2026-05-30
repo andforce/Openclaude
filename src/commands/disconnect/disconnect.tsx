@@ -7,7 +7,7 @@ import {
 } from '../../bridge/trustedDevice.js'
 import { Box, Text, useInput } from '../../ink.js'
 import type { LocalJSXCommandContext } from '../../commands.js'
-import { Login } from '../login/login.js'
+import { ConnectDialog } from '../connect/connect.js'
 import type { LocalJSXCommandOnDone } from '../../types/command.js'
 import { Dialog } from '../../components/design-system/Dialog.js'
 import { Select, type OptionWithDescription } from '../../components/CustomSelect/index.js'
@@ -400,51 +400,6 @@ function DisconnectDialog({
     }
   }, [context, step])
 
-  const handleReloginDone = React.useCallback(
-    async (success: boolean) => {
-      context.onChangeAPIKey()
-      // Signature-bearing blocks are bound to the API key.
-      context.setMessages(stripSignatureBlocks)
-
-      if (success) {
-        resetCostState()
-        void refreshRemoteManagedSettings()
-        void refreshPolicyLimits()
-        resetUserCache()
-        refreshGrowthBookAfterAuthChange()
-        clearTrustedDeviceToken()
-        void enrollTrustedDevice()
-        resetBypassPermissionsCheck()
-
-        const appState = context.getAppState()
-        void checkAndDisableBypassPermissionsIfNeeded(
-          appState.toolPermissionContext,
-          context.setAppState,
-        )
-
-        if (feature('TRANSCRIPT_CLASSIFIER')) {
-          resetAutoModeGateCheck()
-          void checkAndDisableAutoModeIfNeeded(
-            appState.toolPermissionContext,
-            context.setAppState,
-            appState.fastMode,
-          )
-        }
-
-        context.setAppState(prev => ({
-          ...prev,
-          authVersion: prev.authVersion + 1,
-        }))
-
-        onDone('Provider reconnected successfully')
-        return
-      }
-
-      onDone(undefined, { display: 'skip' })
-    },
-    [context, onDone],
-  )
-
   const handleSuccessClose = React.useCallback(() => {
     if (step.type !== 'success') {
       return
@@ -510,9 +465,55 @@ function DisconnectDialog({
 
   if (step.type === 're-login') {
     return (
-      <Login
-        startingMessage="All providers disconnected. Please connect a new provider."
-        onDone={handleReloginDone}
+      <ConnectDialog
+        onDone={(message, args) => {
+          if (message) {
+            // Post-connect cleanup (keep in sync with handleReloginDone)
+            context.onChangeAPIKey()
+            context.setMessages(stripSignatureBlocks)
+            resetCostState()
+            void refreshRemoteManagedSettings()
+            void refreshPolicyLimits()
+            resetUserCache()
+            refreshGrowthBookAfterAuthChange()
+            clearTrustedDeviceToken()
+            void enrollTrustedDevice()
+            resetBypassPermissionsCheck()
+
+            const appState = context.getAppState()
+            void checkAndDisableBypassPermissionsIfNeeded(
+              appState.toolPermissionContext,
+              context.setAppState,
+            )
+
+            if (feature('TRANSCRIPT_CLASSIFIER')) {
+              resetAutoModeGateCheck()
+              void checkAndDisableAutoModeIfNeeded(
+                appState.toolPermissionContext,
+                context.setAppState,
+                appState.fastMode,
+              )
+            }
+
+            context.setAppState(prev => ({
+              ...prev,
+              authVersion: prev.authVersion + 1,
+            }))
+
+            onDone('Provider reconnected successfully')
+          } else {
+            onDone(undefined, args)
+          }
+        }}
+        onChangeAPIKey={context.onChangeAPIKey}
+        onProviderActivated={() => {
+          clearUserSpecifiedModelSetting()
+          context.setAppState(prev => ({
+            ...prev,
+            mainLoopModel: null,
+            mainLoopModelForSession: null,
+          }))
+        }}
       />
     )
   }

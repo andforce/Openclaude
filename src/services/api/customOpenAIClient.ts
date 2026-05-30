@@ -124,7 +124,27 @@ export function getCustomOpenAIProvider(
   // rather than any connected custom-openai endpoint). Returns undefined when
   // the active provider isn't a custom-openai one.
   const cfg = getGlobalConfig()
-  return getCustomOpenAIProviderById(cfg, providerId ?? cfg.activeProvider)
+  const resolvedId = providerId ?? cfg.activeProvider
+
+  if (isCustomOpenAIProviderId(resolvedId)) {
+    const provider = getCustomOpenAIProviderById(cfg, resolvedId)
+    if (provider) return provider
+
+    // Legacy kimi-for-coding provider: when the active provider is
+    // kimi-for-coding but the model was formatted as custom-openai:<model>
+    // to route through the OpenAI bridge, the standard lookup fails because
+    // the provider is stored under 'kimi-for-coding', not 'custom-openai'.
+    // Only fall back when there is no real custom-openai entry (otherwise
+    // a connected DeepSeek endpoint would shadow a Kimi request).
+    if (resolvedId === CUSTOM_OPENAI_PROVIDER_ID) {
+      const kp = cfg.connectedProviders?.['kimi-for-coding']
+      if (kp?.apiKey) {
+        return { ...kp, baseUrl: kp.baseUrl || 'https://api.kimi.com/coding/v1' }
+      }
+    }
+  }
+
+  return undefined
 }
 
 export function isCustomOpenAIConnected(): boolean {

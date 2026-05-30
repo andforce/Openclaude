@@ -44,6 +44,16 @@ const PROVIDERS: OptionWithDescription<string>[] = [
     hint: 'OpenAI /v1/chat/completions · OpenAI, Ollama, vLLM, LM Studio… · base URL + optional key',
   },
   {
+    value: 'deepseek',
+    label: 'DeepSeek',
+    hint: 'DeepSeek API · enter your API token · auto-fetches models',
+  },
+  {
+    value: 'kimi-code',
+    label: 'Kimi Code',
+    hint: 'Kimi Code API · enter your API token · auto-fetches models',
+  },
+  {
     value: 'openrouter',
     label: 'OpenRouter Anthropic-compatible API',
     hint: 'Unified API for multiple models',
@@ -52,9 +62,24 @@ const PROVIDERS: OptionWithDescription<string>[] = [
 
 const OPENROUTER_ANTHROPIC_BASE_URL = 'https://openrouter.ai/api'
 
+const PRESET_BASE_URLS: Record<string, string> = {
+  'https://api.deepseek.com': 'deepseek',
+  'https://api.kimi.com/coding/v1': 'kimi-code',
+}
+
 const PROVIDER_CONFIG: Record<string, { name: string; apiKeyUrl: string; keyPlaceholder: string }> = {
   'kimi-for-coding': {
     name: 'Kimi For Coding',
+    apiKeyUrl: 'https://platform.moonshot.cn/',
+    keyPlaceholder: 'sk-...',
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    apiKeyUrl: 'https://platform.deepseek.com/api_keys',
+    keyPlaceholder: 'sk-...',
+  },
+  'kimi-code': {
+    name: 'Kimi Code',
     apiKeyUrl: 'https://platform.moonshot.cn/',
     keyPlaceholder: 'sk-...',
   },
@@ -648,7 +673,7 @@ function OptionalMaskedKeyInput({
   )
 }
 
-function ConnectDialog({
+export function ConnectDialog({
   onDone,
   onChangeAPIKey,
   onProviderActivated,
@@ -708,6 +733,14 @@ function ConnectDialog({
     }
     if (providerId === 'custom-anthropic') {
       setStep({ type: 'custom-anthropic', step: 'base' })
+      return
+    }
+    if (providerId === 'deepseek') {
+      setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://api.deepseek.com' })
+      return
+    }
+    if (providerId === 'kimi-code') {
+      setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://api.kimi.com/coding/v1' })
       return
     }
     if (providerId === 'openrouter') {
@@ -1311,6 +1344,48 @@ function ConnectDialog({
                   fetchError: 'Enter at least one model ID.',
                 })
               }}
+            />
+          </Box>
+        </Dialog>
+      )
+    }
+    const presetProviderId = PRESET_BASE_URLS[step.baseUrl || '']
+    if (presetProviderId) {
+      return (
+        <Dialog title={PROVIDER_CONFIG[presetProviderId].name} onCancel={handleCancel}>
+          <Box flexDirection="column" gap={1}>
+            {step.fetchError ? <Text color="red">{step.fetchError}</Text> : null}
+            <ApiKeyInput
+              providerId={presetProviderId}
+              onSubmit={apiKey => {
+                // DeepSeek / Kimi Code: skip model fetch + select.
+                // Use the well-known default model for each provider.
+                const defaultModel =
+                  presetProviderId === 'kimi-code'
+                    ? 'kimi-for-coding'
+                    : 'deepseek-chat'
+                const providerId = resolveCustomOpenAIProviderId(
+                  getGlobalConfig(),
+                  step.baseUrl || '',
+                )
+                saveGlobalConfig(current => ({
+                  ...current,
+                  connectedProviders: {
+                    ...(current.connectedProviders || {}),
+                    [providerId]: {
+                      apiKey,
+                      baseUrl: step.baseUrl || '',
+                      defaultModel,
+                      connectedAt: new Date().toISOString(),
+                    },
+                  },
+                  activeProvider: providerId,
+                }))
+                onChangeAPIKey()
+                onProviderActivated()
+                setStep({ type: 'success', providerId })
+              }}
+              onCancel={handleCancel}
             />
           </Box>
         </Dialog>
