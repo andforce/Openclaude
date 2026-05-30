@@ -13,6 +13,7 @@ import {
   convertAnthropicToolsToOpenAI,
   convertToolChoice,
   convertOpenAIStreamToAnthropic,
+  mapOpenAIStopReason,
   type AnthropicMessage,
 } from './copilotClient.js'
 import {
@@ -142,7 +143,7 @@ function normalizeBaseUrl(url: string): string {
  * Check if the model requires `max_completion_tokens` instead of `max_tokens`.
  * `o1`/`o3`/`o4` reasoning models and `gpt-5` variants enforce this.
  */
-function requiresMaxCompletionTokens(modelId: string): boolean {
+export function requiresMaxCompletionTokens(modelId: string): boolean {
   const m = modelId.toLowerCase()
   return (
     m.startsWith('o1') ||
@@ -643,7 +644,7 @@ export function createCustomOpenAIFetchOverride(
         role: 'assistant',
         content: anthropicContent,
         model: openaiModelId,
-        stop_reason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : choice?.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
+        stop_reason: mapOpenAIStopReason(choice?.finish_reason || 'stop'),
         usage: {
           input_tokens: inputTokens,
           output_tokens: data.usage?.completion_tokens || 0,

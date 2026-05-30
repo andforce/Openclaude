@@ -567,6 +567,13 @@ type OpenAITool = {
   }
 }
 
+/** Map OpenAI `finish_reason` → Anthropic `stop_reason`. */
+export function mapOpenAIStopReason(finishReason: string): string {
+  if (finishReason === 'tool_calls') return 'tool_use'
+  if (finishReason === 'length') return 'max_tokens'
+  return 'end_turn'
+}
+
 /** Anthropic `tool_choice` → OpenAI `tool_choice`. Shared with custom-openai path. */
 export function convertToolChoice(
   toolChoice: unknown,
@@ -1471,7 +1478,7 @@ export function convertOpenAIStreamToAnthropic(
               emitEvent({
                 type: 'message_delta',
                 delta: {
-                  stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
+                  stop_reason: mapOpenAIStopReason(choice.finish_reason),
                 },
                 usage: finalUsage(),
               })

@@ -361,6 +361,11 @@ export async function foldDeepSeekMessagesIfNeeded(
         break
       }
     }
+    // If even the last single message exceeds maxTokens (pathological), still
+    // keep it — returning an empty view would be worse than a truncated one.
+    if (kept === toKeep.length && toKeep.length > 1) {
+      kept = 1
+    }
     const truncated = toKeep.slice(-kept)
     return {
       messages: truncated,
