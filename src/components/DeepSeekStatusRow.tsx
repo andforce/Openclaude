@@ -73,10 +73,9 @@ function DeepSeekStatusRowInner({
   // official DeepSeek endpoint. Hooks above run unconditionally (rules of hooks);
   // the balance fetch no-ops off-DeepSeek.
   const ref = parseOpenAICompatibleModelValue(model)
-  if (!ref) {
-    return null
-  }
-  const provider = getCustomOpenAIProvider(ref.providerId)
+  const provider = ref
+    ? getCustomOpenAIProvider(ref.providerId)
+    : getCustomOpenAIProvider() // fallback: check active provider
   if (!isDeepSeekOfficialBaseUrl(provider?.baseUrl)) {
     return null
   }

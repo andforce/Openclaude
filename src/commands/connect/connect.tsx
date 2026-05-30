@@ -1220,8 +1220,11 @@ export function ConnectDialog({
       )
     }
     if (step.step === 'fetching') {
+      const dialogTitle = PRESET_BASE_URLS[step.baseUrl || '']
+        ? PROVIDER_CONFIG[PRESET_BASE_URLS[step.baseUrl || '']]?.name
+        : 'Custom OpenAI-compatible API'
       return (
-        <Dialog title="Custom OpenAI-compatible API" onCancel={handleCancel}>
+        <Dialog title={dialogTitle} onCancel={handleCancel}>
           <Box flexDirection="column" gap={1}>
             <Box>
               <Spinner />
@@ -1234,10 +1237,13 @@ export function ConnectDialog({
     }
     if (step.step === 'models-fetch-error') {
       const st = step
+      const dialogTitle = st.baseUrl && PRESET_BASE_URLS[st.baseUrl]
+        ? PROVIDER_CONFIG[PRESET_BASE_URLS[st.baseUrl]]?.name
+        : 'Custom OpenAI-compatible API'
       return (
-        <Dialog title="Custom OpenAI-compatible API" onCancel={handleCancel}>
+        <Dialog title={dialogTitle} onCancel={handleCancel}>
           <ModelsFetchErrorChoice
-            title="Custom OpenAI-compatible API"
+            title={dialogTitle}
             baseUrl={st.baseUrl}
             fetchError={st.fetchError}
             onEditBaseUrl={() => {
@@ -1270,8 +1276,11 @@ export function ConnectDialog({
     }
     if (step.step === 'select' && step.models && step.models.length > 0) {
       const st = step
+      const dialogTitle = st.baseUrl && PRESET_BASE_URLS[st.baseUrl]
+        ? PROVIDER_CONFIG[PRESET_BASE_URLS[st.baseUrl]]?.name
+        : 'Custom OpenAI-compatible API'
       return (
-        <Dialog title="Custom OpenAI-compatible API" onCancel={handleCancel}>
+        <Dialog title={dialogTitle} onCancel={handleCancel}>
           <SearchableModelSelect
             providerLabel="OpenAI-compatible"
             baseUrl={st.baseUrl}
@@ -1358,12 +1367,19 @@ export function ConnectDialog({
             <ApiKeyInput
               providerId={presetProviderId}
               onSubmit={apiKey => {
-                // DeepSeek / Kimi Code: skip model fetch + select.
-                // Use the well-known default model for each provider.
-                const defaultModel =
-                  presetProviderId === 'kimi-code'
-                    ? 'kimi-for-coding'
-                    : 'deepseek-chat'
+                // DeepSeek: fetch models from /v1/models + let user select.
+                // Kimi Code: skip model fetch, use well-known default model.
+                if (presetProviderId === 'deepseek') {
+                  setStep({
+                    type: 'custom-openai',
+                    step: 'fetching',
+                    baseUrl: step.baseUrl || '',
+                    apiKey,
+                  })
+                  return
+                }
+                // Kimi Code path
+                const defaultModel = 'kimi-for-coding'
                 const providerId = resolveCustomOpenAIProviderId(
                   getGlobalConfig(),
                   step.baseUrl || '',
