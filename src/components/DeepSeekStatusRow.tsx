@@ -28,13 +28,16 @@ type Props = {
 }
 
 /** Fetch the DeepSeek balance on mount and after each turn. In-memory only. */
-function useDeepSeekBalance(refreshKey: string | null): DeepSeekBalance | null {
+function useDeepSeekBalance(
+  refreshKey: string | null,
+  providerId: string | undefined,
+): DeepSeekBalance | null {
   const [balance, setBalance] = useState<DeepSeekBalance | null>(null)
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
     void (async () => {
-      const b = await fetchDeepSeekBalance(controller.signal)
+      const b = await fetchDeepSeekBalance(controller.signal, providerId)
       if (!cancelled && b) {
         setBalance(b)
       }
@@ -43,7 +46,7 @@ function useDeepSeekBalance(refreshKey: string | null): DeepSeekBalance | null {
       cancelled = true
       controller.abort()
     }
-  }, [refreshKey])
+  }, [refreshKey, providerId])
   return balance
 }
 
@@ -63,15 +66,20 @@ function DeepSeekStatusRowInner({
 }: Props): React.ReactNode {
   const model = useMainLoopModel()
   const { columns } = useTerminalSize()
-  const balance = useDeepSeekBalance(lastAssistantMessageId)
+
+  // Resolve the provider for both the gate and the balance fetch so they
+  // agree on which custom-openai entry to use (model's provider, not active).
+  const ref = parseOpenAICompatibleModelValue(model)
+  const providerId = ref?.providerId
+  const provider = providerId
+    ? getCustomOpenAIProvider(providerId)
+    : getCustomOpenAIProvider()
+
+  const balance = useDeepSeekBalance(lastAssistantMessageId, providerId)
 
   // Self-gate: render only when the current model's provider base URL is the
   // official DeepSeek endpoint. Hooks above run unconditionally (rules of hooks);
   // the balance fetch no-ops off-DeepSeek.
-  const ref = parseOpenAICompatibleModelValue(model)
-  const provider = ref
-    ? getCustomOpenAIProvider(ref.providerId)
-    : getCustomOpenAIProvider() // fallback: check active provider
   if (!isDeepSeekOfficialBaseUrl(provider?.baseUrl)) {
     return null
   }

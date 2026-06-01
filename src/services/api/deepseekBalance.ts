@@ -7,7 +7,6 @@
  * Reasonix `client.getBalance()`.
  */
 
-import { logForDebugging } from '../../utils/debug.js'
 import {
   getCustomOpenAIProvider,
   isCustomOpenAIConnected,
@@ -95,8 +94,9 @@ function pickPrimaryBalance(infos: RawBalanceInfo[]): DeepSeekBalance | null {
  */
 export async function fetchDeepSeekBalance(
   signal?: AbortSignal,
+  providerId?: string,
 ): Promise<DeepSeekBalance | null> {
-  const provider = getCustomOpenAIProvider()
+  const provider = getCustomOpenAIProvider(providerId)
   if (!provider?.baseUrl || !provider.apiKey) {
     return null
   }
@@ -121,11 +121,7 @@ export async function fetchDeepSeekBalance(
       return null
     }
     return pickPrimaryBalance(data.balance_infos)
-  } catch (err) {
-    logForDebugging(
-      `[DEEPSEEK-BALANCE] fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-      { level: 'warn' },
-    )
+  } catch {
     return null
   }
 }
