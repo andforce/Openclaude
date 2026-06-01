@@ -105,6 +105,30 @@ tail -f /tmp/openclaude-debug.log | rg "API REQUEST|API:request|Anthropic SDK"
 
 > 需要 **2.1.92** 及以上版本（旧版本如 2.1.91 不含此命令）。
 
+### `/debug-mode`
+
+运行时调试模式，用于排查 bug：引导 agent 按证据驱动的流程插入临时探针、收集运行时日志、定位根因、修复并验证，最后清理所有探针代码。
+
+用法：
+
+```text
+/debug-mode <bug 描述>                        # 进入调试模式，描述问题现象
+/debug-mode 点击保存按钮后页面无响应，没有报错   # 示例
+```
+
+调试流程为 **7 个检查点**：
+
+0. **Triage** — 收集缺失的复现信息
+1. **Plan Probes** — 读代码、提假设、规划探针位置
+2. **Init Session** — 初始化 `.openclaude-debug/` 目录与 `debug.log`
+3. **Insert Probes** — 在源文件中插入 `DEBUG PROBE [N]` 探针块
+4. **Reproduce & Collect** — 复现问题，收集日志
+5. **Analyze** — 基于日志证据定位根因
+6. **Fix & Verify** — 最小修复，保留探针验证
+7. **Cleanup** — 移除所有探针，清理调试目录
+
+探针支持 **TypeScript / Python / Java / Kotlin / Swift / SwiftUI / Objective-C / C / C++ / Go / Rust / Shell** 及前端浏览器 `console.log`，并支持 **Android (adb logcat)** 与 **iOS (idevicesyslog / xcrun)** 物理设备调试。
+
 ---
 
 从源码本地构建请参考仓库内 `AGENTS.md` / `CLAUDE.md`（需 **Bun** 与 **pnpm**）。
