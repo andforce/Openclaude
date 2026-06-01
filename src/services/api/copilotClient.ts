@@ -1232,6 +1232,13 @@ export function convertOpenAIStreamToAnthropic(
   // Anthropic `thinking` block at index 0 so it renders and round-trips.
   let reasoningStarted = false
   let reasoningStopped = false
+  // A finish_reason chunk has been seen and the content blocks closed, but the
+  // message isn't finalized yet: OpenAI-compatible servers with
+  // stream_options.include_usage (MiMo, etc.) send usage in a trailing chunk
+  // AFTER finish_reason, so we defer the final message_delta until [DONE] /
+  // stream end to capture it.
+  let finished = false
+  let finalStopReason = 'end_turn'
 
   return new ReadableStream({
     async start(controller) {
@@ -1277,20 +1284,31 @@ export function convertOpenAIStreamToAnthropic(
             if (!line.startsWith('data:')) continue
             const data = line.slice(5).trim()
             if (data === '[DONE]') {
-              closeReasoning()
-              if (hasStartedText) {
-                emitEvent({ type: 'content_block_stop', index: contentIndex })
-              }
-              for (const [idx, tc] of toolCalls) {
-                const toolBlockIndex = (hasStartedText ? 1 : 0) + idx
-                emitEvent({
-                  type: 'content_block_stop',
-                  index: toolBlockIndex,
-                })
+              // If a finish_reason chunk already closed the content blocks,
+              // don't re-close them — just emit the final usage, which a
+              // trailing usage-only chunk may have populated after finish_reason.
+              if (!finished) {
+                closeReasoning()
+                if (hasStartedText) {
+                  emitEvent({ type: 'content_block_stop', index: contentIndex })
+                }
+                for (const [idx, tc] of toolCalls) {
+                  const toolBlockIndex = (hasStartedText ? 1 : 0) + idx
+                  emitEvent({
+                    type: 'content_block_stop',
+                    index: toolBlockIndex,
+                  })
+                }
               }
               emitEvent({
                 type: 'message_delta',
-                delta: { stop_reason: toolCalls.size > 0 ? 'tool_use' : 'end_turn' },
+                delta: {
+                  stop_reason: finished
+                    ? finalStopReason
+                    : toolCalls.size > 0
+                      ? 'tool_use'
+                      : 'end_turn',
+                },
                 usage: finalUsage(),
               })
               emitEvent({ type: 'message_stop' })
@@ -1352,7 +1370,22 @@ export function convertOpenAIStreamToAnthropic(
                   cacheMissTokens: inputTokens,
                 })
               }
+            } else if (usage != null) {
+              // Debug: log unusual usage shapes (e.g. MiMo may send partial
+              // usage objects or omit prompt_tokens entirely).
+              try {
+                const { logForDebugging } = await import('../../utils/debug.js')
+                logForDebugging(
+                  `[OPENAI-STREAM] usage chunk without prompt_tokens: ${JSON.stringify(usage)}`,
+                  { level: 'info' },
+                )
+              } catch { /* ignore */ }
             }
+
+            // After finish_reason the content blocks are already closed; later
+            // chunks (e.g. the trailing usage chunk) are only mined for usage
+            // above, never re-emitted as content.
+            if (finished) continue
 
             const choices = chunk.choices as Array<{
               delta?: {
@@ -1467,6 +1500,12 @@ export function convertOpenAIStreamToAnthropic(
             }
 
             if (choice.finish_reason) {
+              // Close the content blocks now, but DON'T finalize the message:
+              // with stream_options.include_usage, OpenAI-compatible servers
+              // (MiMo, etc.) send the token usage in a separate chunk AFTER the
+              // finish_reason chunk. Returning here would emit zero usage and
+              // drop that trailing chunk, so record the stop reason and keep
+              // reading until [DONE] / stream end emits the real usage.
               closeReasoning()
               if (hasStartedText && toolCalls.size === 0) {
                 emitEvent({ type: 'content_block_stop', index: contentIndex })
@@ -1475,16 +1514,9 @@ export function convertOpenAIStreamToAnthropic(
                 const toolBlockIndex = contentIndex + idx
                 emitEvent({ type: 'content_block_stop', index: toolBlockIndex })
               }
-              emitEvent({
-                type: 'message_delta',
-                delta: {
-                  stop_reason: mapOpenAIStopReason(choice.finish_reason),
-                },
-                usage: finalUsage(),
-              })
-              emitEvent({ type: 'message_stop' })
-              controller.close()
-              return
+              finalStopReason = mapOpenAIStopReason(choice.finish_reason)
+              finished = true
+              continue
             }
           }
         }
@@ -1504,7 +1536,7 @@ export function convertOpenAIStreamToAnthropic(
         }
         emitEvent({
           type: 'message_delta',
-          delta: { stop_reason: 'end_turn' },
+          delta: { stop_reason: finished ? finalStopReason : 'end_turn' },
           usage: finalUsage(),
         })
         emitEvent({ type: 'message_stop' })

@@ -107,6 +107,33 @@ export const DEEPSEEK_COST_PRO = {
   webSearchRequests: 0,
 } as const satisfies ModelCosts
 
+// MiMo pricing (¥ per 1M tokens). Matched on model name (mimo-*).
+// Priced directly in CNY — the MiMo status row renders these as ¥.
+// @see https://platform.xiaomimimo.com/static/docs/price/pay-as-you-go.md
+export const MIMO_COST_PRO = {
+  inputTokens: 3,       // ¥3.00/Mtok cache miss
+  outputTokens: 6,      // ¥6.00/Mtok output
+  promptCacheWriteTokens: 0,
+  promptCacheReadTokens: 0.025,  // ¥0.025/Mtok cache hit
+  webSearchRequests: 0,
+} as const satisfies ModelCosts
+
+export const MIMO_COST_STANDARD = {
+  inputTokens: 1,       // ¥1.00/Mtok cache miss
+  outputTokens: 2,      // ¥2.00/Mtok output
+  promptCacheWriteTokens: 0,
+  promptCacheReadTokens: 0.02,   // ¥0.02/Mtok cache hit
+  webSearchRequests: 0,
+} as const satisfies ModelCosts
+
+export const MIMO_COST_FLASH = {
+  inputTokens: 0.7,     // ¥0.70/Mtok cache miss
+  outputTokens: 2.1,    // ¥2.10/Mtok output
+  promptCacheWriteTokens: 0,
+  promptCacheReadTokens: 0.07,   // ¥0.07/Mtok cache hit
+  webSearchRequests: 0,
+} as const satisfies ModelCosts
+
 const DEFAULT_UNKNOWN_MODEL_COST = COST_TIER_5_25
 
 /**
@@ -178,6 +205,25 @@ export function getDeepSeekCosts(model: string): ModelCosts | undefined {
   return DEEPSEEK_COST_CHAT
 }
 
+/**
+ * MiMo model pricing (¥ per 1M tokens), or undefined for non-MiMo models.
+ * Matched on the model id (mimo-v2.5-pro, mimo-v2.5, etc.).
+ */
+export function getMiMoCosts(model: string): ModelCosts | undefined {
+  const m = model.toLowerCase()
+  if (!m.includes('mimo')) {
+    return undefined
+  }
+  if (m.includes('flash')) {
+    return MIMO_COST_FLASH
+  }
+  if (m.includes('pro')) {
+    return MIMO_COST_PRO
+  }
+  // mimo-v2.5, mimo-v2-omni, etc.
+  return MIMO_COST_STANDARD
+}
+
 export function getModelCosts(model: string, usage: Usage): ModelCosts {
   // DeepSeek (custom-openai) isn't in the canonical Anthropic table; price it
   // directly so cost tracking + the DeepSeek status row are accurate rather
@@ -185,6 +231,12 @@ export function getModelCosts(model: string, usage: Usage): ModelCosts {
   const deepseekCosts = getDeepSeekCosts(model)
   if (deepseekCosts) {
     return deepseekCosts
+  }
+
+  // MiMo (custom-openai) — same treatment as DeepSeek.
+  const mimoCosts = getMiMoCosts(model)
+  if (mimoCosts) {
+    return mimoCosts
   }
 
   const shortName = getCanonicalName(model)

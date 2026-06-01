@@ -13,6 +13,12 @@ export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 // row, /context, and auto-compact thresholds consistent.
 export const DEEPSEEK_CONTEXT_TOKENS = 1_000_000
 
+// MiMo models: pro has 128K max_completion_tokens (likely ~200K context);
+// standard/flash have 32K–64K output (likely ~128K context). Conservative
+// defaults until the platform publishes exact limits.
+export const MIMO_PRO_CONTEXT_TOKENS = 200_000
+export const MIMO_STANDARD_CONTEXT_TOKENS = 128_000
+
 // Maximum output tokens for compact operations
 export const COMPACT_MAX_OUTPUT_TOKENS = 20_000
 
@@ -74,6 +80,13 @@ export function getContextWindowForModel(
   // DeepSeek models ship a 1M context window and aren't in the capability table.
   if (/deepseek/i.test(model)) {
     return DEEPSEEK_CONTEXT_TOKENS
+  }
+
+  // MiMo models — pro ~200K, standard/flash ~128K. Not in the capability table.
+  if (/mimo/i.test(model)) {
+    return /pro/i.test(model)
+      ? MIMO_PRO_CONTEXT_TOKENS
+      : MIMO_STANDARD_CONTEXT_TOKENS
   }
 
   // [1m] suffix — explicit client-side opt-in, respected over all detection

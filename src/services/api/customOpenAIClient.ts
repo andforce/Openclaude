@@ -207,6 +207,26 @@ export function isKimiProvider(baseUrl: string | undefined, modelId: string): bo
   return modelId.toLowerCase().includes('kimi')
 }
 
+/**
+ * Whether this provider is MiMo / Xiaomi (host `*.xiaomimimo.com` or a `mimo*`
+ * model). MiMo's OpenAI-compatible API returns standard
+ * `prompt_tokens_details.cached_tokens` for cache-hit accounting, so cache
+ * diagnostics and cost tracking apply.
+ */
+export function isMiMoProvider(baseUrl: string | undefined, modelId: string): boolean {
+  if (baseUrl) {
+    try {
+      const host = new URL(normalizeBaseUrl(baseUrl)).hostname.toLowerCase()
+      if (host === 'xiaomimimo.com' || host.endsWith('.xiaomimimo.com')) {
+        return true
+      }
+    } catch {
+      // fall through to model-name check
+    }
+  }
+  return modelId.toLowerCase().includes('mimo')
+}
+
 /** Whether the configured base points at DeepSeek's `/beta` endpoint (where strict mode lives). */
 function isDeepSeekBetaBase(baseUrl: string | undefined): boolean {
   if (!baseUrl) {
@@ -386,6 +406,7 @@ export function createCustomOpenAIFetchOverride(
   const openaiModelId = getCustomOpenAIModelId(model)
   const deepseek = isDeepSeekProvider(provider.baseUrl, openaiModelId)
   const kimi = isKimiProvider(provider.baseUrl, openaiModelId)
+  const mimo = isMiMoProvider(provider.baseUrl, openaiModelId)
   // Strict tool mode is a DeepSeek beta feature — opt in by connecting to the
   // `/beta` endpoint. It tightens function schemas so argument JSON adheres exactly.
   const useStrictTools = deepseek && isDeepSeekBetaBase(provider.baseUrl)
@@ -539,11 +560,11 @@ export function createCustomOpenAIFetchOverride(
       requestBody.tool_choice = convertToolChoice(anthropicBody.tool_choice) ?? 'auto'
     }
 
-    // DeepSeek cache diagnostics: capture prefix state before the API call
+    // DeepSeek/MiMo cache diagnostics: capture prefix state before the API call
     // so we can infer why a cache miss occurred. Only runs when debug
     // logging is active (--debug / --debug-file).
     let prefixSnapshot: ReturnType<typeof recordPrefixState> | null = null
-    if (deepseek) {
+    if (deepseek || mimo) {
       prefixSnapshot = recordPrefixState({
         system: systemPrompt,
         tools: stableTools,
@@ -644,10 +665,10 @@ export function createCustomOpenAIFetchOverride(
       const inputTokens =
         data.usage?.prompt_cache_miss_tokens ?? Math.max(0, promptTokens - cacheHit)
 
-      // Record DeepSeek cache diagnostics for debug inspection.
+      // Record DeepSeek/MiMo cache diagnostics for debug inspection.
       const cacheMissTokens = data.usage?.prompt_cache_miss_tokens ??
         Math.max(0, promptTokens - cacheHit)
-      if (deepseek && prefixSnapshot) {
+      if ((deepseek || mimo) && prefixSnapshot) {
         recordCacheUsage({
           prefixHash: prefixSnapshot.prefixHash,
           systemHash: prefixSnapshot.systemHash,
@@ -682,13 +703,13 @@ export function createCustomOpenAIFetchOverride(
       return openaiResponse
     }
 
-    // DeepSeek cache diagnostics for the streaming path (the default path).
+    // DeepSeek/MiMo cache diagnostics for the streaming path (the default path).
     // Usage is only available inside the stream's final chunk, so record it via
     // a callback rather than the non-streaming branch above.
     const transformStream = convertOpenAIStreamToAnthropic(
       openaiResponse.body,
       openaiModelId,
-      deepseek && prefixSnapshot
+      (deepseek || mimo) && prefixSnapshot
         ? usage => {
             recordCacheUsage({
               prefixHash: prefixSnapshot!.prefixHash,
