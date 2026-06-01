@@ -76,10 +76,11 @@ tail -f /tmp/openclaude-debug.log | rg "API REQUEST|API:request|Anthropic SDK"
 
 配置并连接模型提供方，交互式选择其一：
 
-1. **GitHub Copilot** — 设备码 OAuth，使用 Copilot 侧模型（如 GPT-4o、Claude 等）
-2. **OpenRouter** — 填写 API Key，统一访问多种模型
-3. **Custom OpenAI-compatible API** — 自定义 Base URL，可选 API Key，从 `/v1/models` 选模型
-4. **Custom Anthropic-compatible API** — 同上，兼容 Anthropic 风格接口
+1. **Custom Anthropic-compatible API** — 自定义 Base URL，可选 API Key，从 `/v1/models` 选模型
+2. **Custom OpenAI-compatible API** — 自定义 Base URL，可选 API Key，从 `/v1/models` 选模型，兼容 OpenAI、Ollama、vLLM、LM Studio 等
+3. **DeepSeek** — 填写 API Token，自动拉取模型列表
+4. **Kimi Code** — 填写 API Token，自动拉取模型列表
+5. **OpenRouter Anthropic-compatible API** — 填写 API Key，统一访问多种模型
 
 连接成功后，凭证会写入全局配置，供会话使用。
 
@@ -98,9 +99,10 @@ tail -f /tmp/openclaude-debug.log | rg "API REQUEST|API:request|Anthropic SDK"
 用法：
 
 ```text
-/goal <objective>                       # 设定目标并开始
-/goal --budget=$5 --time=30m <objective># 带预算/时长上限
-/goal pause | resume | clear            # 暂停 / 恢复 / 清除
+/goal set <objective>                     # 设定目标并开始
+/goal <objective>                         # 同上（简写）
+/goal --budget=$5 --time=30m <objective>  # 带预算/时长上限
+/goal pause | resume | clear | edit       # 暂停 / 恢复 / 清除 / 编辑
 ```
 
 > 需要 **2.1.92** 及以上版本（旧版本如 2.1.91 不含此命令）。
