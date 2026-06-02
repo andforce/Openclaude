@@ -40,11 +40,15 @@ const VERIFY_PLAN_EXECUTION_TOOL_NAME =
         require('../../tools/VerifyPlanExecutionTool/constants.js') as typeof import('../../tools/VerifyPlanExecutionTool/constants.js')
       ).VERIFY_PLAN_EXECUTION_TOOL_NAME
     : null
-const WORKFLOW_TOOL_NAME = feature('WORKFLOW_SCRIPTS')
-  ? (
+const WORKFLOW_TOOL_NAME = (() => {
+  try {
+    return (
       require('../../tools/WorkflowTool/constants.js') as typeof import('../../tools/WorkflowTool/constants.js')
     ).WORKFLOW_TOOL_NAME
-  : null
+  } catch {
+    return null
+  }
+})()
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 /**

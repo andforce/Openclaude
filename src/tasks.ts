@@ -6,9 +6,13 @@ import { LocalShellTask } from './tasks/LocalShellTask/LocalShellTask.js'
 import { RemoteAgentTask } from './tasks/RemoteAgentTask/RemoteAgentTask.js'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const LocalWorkflowTask: Task | null = feature('WORKFLOW_SCRIPTS')
-  ? require('./tasks/LocalWorkflowTask/LocalWorkflowTask.js').LocalWorkflowTask
-  : null
+const LocalWorkflowTask: Task | null = (() => {
+  try {
+    return (require('./tasks/LocalWorkflowTask/LocalWorkflowTask.js') as typeof import('./tasks/LocalWorkflowTask/LocalWorkflowTask.js')).LocalWorkflowTask
+  } catch {
+    return null
+  }
+})()
 const MonitorMcpTask: Task | null = feature('MONITOR_TOOL')
   ? require('./tasks/MonitorMcpTask/MonitorMcpTask.js').MonitorMcpTask
   : null

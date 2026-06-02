@@ -44,6 +44,7 @@ import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
+import workflow from './commands/workflow/index.js'
 import telegram from './commands/telegram/index.js'
 import teleport from './commands/teleport/index.js'
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -84,11 +85,6 @@ const voiceCommand = feature('VOICE_MODE')
   : null
 const forceSnip = feature('HISTORY_SNIP')
   ? require('./commands/force-snip.js').default
-  : null
-const workflowsCmd = feature('WORKFLOW_SCRIPTS')
-  ? (
-      require('./commands/workflows/index.js') as typeof import('./commands/workflows/index.js')
-    ).default
   : null
 const webCmd = feature('CCR_REMOTE_SETUP')
   ? (
@@ -348,7 +344,7 @@ const COMMANDS = memoize((): Command[] => [
   passes,
   ...(peersCmd ? [peersCmd] : []),
   tasks,
-  ...(workflowsCmd ? [workflowsCmd] : []),
+  workflow,
   ...(torch ? [torch] : []),
   ...(process.env.USER_TYPE === 'ant' && !process.env.IS_DEMO
     ? INTERNAL_ONLY_COMMANDS
@@ -407,13 +403,25 @@ async function getSkills(cwd: string): Promise<{
   }
 }
 
-/* eslint-disable @typescript-eslint/no-require-imports */
-const getWorkflowCommands = feature('WORKFLOW_SCRIPTS')
-  ? (
-      require('./tools/WorkflowTool/createWorkflowCommand.js') as typeof import('./tools/WorkflowTool/createWorkflowCommand.js')
-    ).getWorkflowCommands
-  : null
-/* eslint-enable @typescript-eslint/no-require-imports */
+const getWorkflowCommands = async (cwd: string): Promise<Command[]> => {
+  try {
+    const { listWorkflows } = await import('./tools/WorkflowTool/loader.js')
+    const workflows = await listWorkflows(cwd)
+    return workflows.map(wf => ({
+      type: 'prompt' as const,
+      name: wf.name,
+      description: wf.description,
+      prompt: async () => [
+        {
+          type: 'text' as const,
+          text: `Run the saved workflow '${wf.name}'. Use the workflow tool with a script that includes workflow('${wf.name}') to invoke it.`,
+        },
+      ],
+    } satisfies Command))
+  } catch {
+    return []
+  }
+}
 
 /**
  * Filters commands by their declared `availability` (auth/provider requirement).

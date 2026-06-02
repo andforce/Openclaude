@@ -96,7 +96,7 @@ const featureFlags: Record<string, boolean> = {
   VERIFICATION_AGENT: false,
   VOICE_MODE: false,
   WEB_BROWSER_TOOL: false,
-  WORKFLOW_SCRIPTS: false,
+  WORKFLOW_SCRIPTS: true,
 }
 
 const result = await Bun.build({

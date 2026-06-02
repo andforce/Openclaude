@@ -131,12 +131,15 @@ const SnipTool = feature('HISTORY_SNIP')
 const ListPeersTool = feature('UDS_INBOX')
   ? require('./tools/ListPeersTool/ListPeersTool.js').ListPeersTool
   : null
-const WorkflowTool = feature('WORKFLOW_SCRIPTS')
-  ? (() => {
-      require('./tools/WorkflowTool/bundled/index.js').initBundledWorkflows()
-      return require('./tools/WorkflowTool/WorkflowTool.js').WorkflowTool
-    })()
-  : null
+const WorkflowTool = (() => {
+  try {
+    require('./tools/WorkflowTool/bundled/index.js').initBundledWorkflows()
+    return require('./tools/WorkflowTool/WorkflowTool.js').WorkflowTool
+  } catch (error) {
+    console.error('[tools] Failed to load WorkflowTool:', error instanceof Error ? error.message : error)
+    return null
+  }
+})()
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 import type { ToolPermissionContext } from './Tool.js'
 import { getDenyRuleForTool } from './utils/permissions/permissions.js'

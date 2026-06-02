@@ -47,6 +47,7 @@
     "@smithy/smithy-client": "^4.12.8",
     "@smithy/util-base64": "^4.3.2",
     "@xmldom/xmldom": "^0.9.9",
+    "acorn": "^8.16.0",
     "ajv": "*",
     "ajv-formats": "*",
     "asciichart": "*",
