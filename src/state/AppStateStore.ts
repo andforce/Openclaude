@@ -79,6 +79,7 @@ export type SpeculationState =
 export const IDLE_SPECULATION_STATE: SpeculationState = { status: 'idle' }
 
 export type FooterItem =
+  | 'workflow'
   | 'tasks'
   | 'tmux'
   | 'bagel'

@@ -15,6 +15,7 @@ import { isVimModeEnabled } from './utils.js';
 import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
 import { isDefaultMode, permissionModeSymbol, permissionModeTitle, getModeColor } from '../../utils/permissions/PermissionMode.js';
 import { BackgroundTaskStatus } from '../tasks/BackgroundTaskStatus.js';
+import { WorkflowFooterStatus } from './WorkflowFooterStatus.js';
 import { isBackgroundTask } from '../../tasks/types.js';
 import { isPanelAgentTask } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { getVisibleAgentTasks } from '../CoordinatorAgentStatus.js';
@@ -275,7 +276,10 @@ function ModeIndicator({
   const selGetState = useSelection().getState;
   const hasNextTick = nextTickAt !== null;
   const isCoordinator = feature('COORDINATOR_MODE') ? coordinatorModule?.isCoordinatorMode() === true : false;
-  const runningTaskCount = useMemo(() => count(Object.values(tasks), t => isBackgroundTask(t) && !("external" === 'ant' && isPanelAgentTask(t))), [tasks]);
+  const runningTaskCount = useMemo(() => count(Object.values(tasks), t => isBackgroundTask(t) && t.type !== 'local_workflow' && !("external" === 'ant' && isPanelAgentTask(t))), [tasks]);
+  // Running workflows render as dedicated footer rows (WorkflowFooterStatus),
+  // not as part of the background-task pill — keep the footer alive for them.
+  const hasRunningWorkflows = Object.values(tasks).some(t_wf => t_wf.type === 'local_workflow' && t_wf.status === 'running');
   const tasksV2 = useTasksV2();
   const hasTaskItems = tasksV2 !== undefined && tasksV2.length > 0;
   const escShortcut = useShortcutDisplay('chat:cancel', 'Chat', 'esc').toLowerCase();
@@ -398,6 +402,7 @@ function ModeIndicator({
         {otherParts.length > 0 && <Box>
             <Byline>{otherParts}</Byline>
           </Box>}
+        <WorkflowFooterStatus onOpen={onOpenTasksDialog} />
       </Box>;
   }
 
@@ -464,24 +469,28 @@ function ModeIndicator({
   // part (e.g. the selection copy/native-select hints) grow the column
   // from 0→1 row. Always render 1 row in fullscreen; return a space when
   // empty so Yoga reserves the row without painting anything visible.
-  if (parts.length === 0 && !tasksPart && !modePart) {
+  if (parts.length === 0 && !tasksPart && !modePart && !hasRunningWorkflows) {
     return isFullscreenEnvEnabled() ? <Text> </Text> : null;
   }
 
   // flexShrink=0 keeps mode + pill at natural width; the remaining parts
-  // truncate at the tail as one string inside the Text wrapper.
-  return <Box height={1} overflow="hidden">
-      {modePart && <Box flexShrink={0}>
-          {modePart}
-          {(tasksPart || parts.length > 0) && <Text dimColor> · </Text>}
-        </Box>}
-      {tasksPart && <Box flexShrink={0}>
-          {tasksPart}
-          {parts.length > 0 && <Text dimColor> · </Text>}
-        </Box>}
-      {parts.length > 0 && <Text wrap="truncate">
-          <Byline>{parts}</Byline>
-        </Text>}
+  // truncate at the tail as one string inside the Text wrapper. Running
+  // workflows render on their own row(s) directly below the mode line.
+  return <Box flexDirection="column">
+      {(modePart || tasksPart || parts.length > 0) && <Box height={1} overflow="hidden">
+        {modePart && <Box flexShrink={0}>
+            {modePart}
+            {(tasksPart || parts.length > 0) && <Text dimColor> · </Text>}
+          </Box>}
+        {tasksPart && <Box flexShrink={0}>
+            {tasksPart}
+            {parts.length > 0 && <Text dimColor> · </Text>}
+          </Box>}
+        {parts.length > 0 && <Text wrap="truncate">
+            <Byline>{parts}</Byline>
+          </Text>}
+      </Box>}
+      <WorkflowFooterStatus onOpen={onOpenTasksDialog} />
     </Box>;
 }
 function getSpinnerHintParts(isLoading: boolean, escShortcut: string, todosShortcut: string, killAgentsShortcut: string, hasTaskItems: boolean, expandedView: 'none' | 'tasks' | 'teammates', hasTeammates: boolean, hasRunningAgentTasks: boolean, isKillAgentsConfirmShowing: boolean): React.ReactElement[] {

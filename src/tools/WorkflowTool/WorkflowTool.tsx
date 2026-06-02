@@ -136,7 +136,7 @@ export const WorkflowTool = buildTool({
     let snapshot: WorkflowSnapshot = createWorkflowSnapshot(parsed.meta)
 
     // Register this workflow with the registry for /workflow command visibility
-    const workflowId = registerWorkflow(parsed.meta)
+    const workflowId = registerWorkflow(parsed.meta, script)
 
     // Create the workflow agent runner using the parent context
     const agentRunner = createWorkflowAgent({

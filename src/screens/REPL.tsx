@@ -291,6 +291,7 @@ import type { ScrollBoxHandle } from '../ink/components/ScrollBox.js';
 import instances from '../ink/instances.js';
 import { createAttachmentMessage, getQueuedCommandAttachments } from '../utils/attachments.js';
 import { QuickShellOverlay, type QuickShellProgress } from '../components/QuickShellOverlay.js';
+import { WorkflowFullscreenView } from '../components/tasks/WorkflowDetailDialog/WorkflowFullscreenView.js';
 import type { ExecResult } from '../utils/Shell.js';
 import { runQuickShellCommand, type QuickShellCommand } from '../utils/quickShell.js';
 import { completeQuickShellInput } from '../utils/quickShellCompletion.js';
@@ -1679,6 +1680,10 @@ export function REPL({
   const [haveShownCostDialog, setHaveShownCostDialog] = useState(getGlobalConfig().hasAcknowledgedCostThreshold);
   const [vimMode, setVimMode] = useState<VimMode>('INSERT');
   const [showBashesDialog, setShowBashesDialog] = useState<string | boolean>(false);
+  // Registry workflow id when the full-screen workflow detail overlay is open.
+  // REPL-level (like showBashesDialog) so it survives PromptInput unmounting and
+  // so focusedInputDialog can isolate keyboard input from the main loop.
+  const [workflowViewId, setWorkflowViewId] = useState<string | null>(null);
   const [isSearchingHistory, setIsSearchingHistory] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
 
@@ -2187,13 +2192,14 @@ export function REPL({
   // Permission and interactive dialogs can show even when toolJSX is set,
   // as long as shouldContinueAnimation is true. This prevents deadlocks when
   // agents set background hints while waiting for user interaction.
-  function getFocusedInputDialog(): 'message-selector' | 'sandbox-permission' | 'tool-permission' | 'prompt' | 'worker-sandbox-permission' | 'elicitation' | 'cost' | 'idle-return' | 'init-onboarding' | 'ide-onboarding' | 'model-switch' | 'undercover-callout' | 'effort-callout' | 'remote-callout' | 'lsp-recommendation' | 'plugin-hint' | 'desktop-upsell' | 'ultraplan-choice' | 'ultraplan-launch' | 'quick-shell' | undefined {
+  function getFocusedInputDialog(): 'message-selector' | 'sandbox-permission' | 'tool-permission' | 'prompt' | 'worker-sandbox-permission' | 'elicitation' | 'cost' | 'idle-return' | 'init-onboarding' | 'ide-onboarding' | 'model-switch' | 'undercover-callout' | 'effort-callout' | 'remote-callout' | 'lsp-recommendation' | 'plugin-hint' | 'desktop-upsell' | 'ultraplan-choice' | 'ultraplan-launch' | 'quick-shell' | 'workflow-detail' | undefined {
     // Exit states always take precedence
     if (isExiting || exitFlow) return undefined;
 
     // High priority dialogs (always show regardless of typing)
     if (isMessageSelectorVisible) return 'message-selector';
     if (quickShellVisible) return 'quick-shell';
+    if (workflowViewId) return 'workflow-detail';
 
     // Suppress interrupt dialogs while user is actively typing
     if (isPromptInputActive) return undefined;
@@ -2362,7 +2368,7 @@ export function REPL({
     setToolUseConfirmQueue,
     onCancel,
     onAgentsKilled: () => setMessages(prev => [...prev, createAgentsKilledMessage()]),
-    isMessageSelectorVisible: isMessageSelectorVisible || !!showBashesDialog,
+    isMessageSelectorVisible: isMessageSelectorVisible || !!showBashesDialog || !!workflowViewId,
     screen,
     abortSignal: abortController?.signal,
     popCommandFromQueue: handleQueuedCommandOnCancel,
@@ -5090,7 +5096,7 @@ export function REPL({
                       {}
                       <PromptInput debug={debug} ideSelection={ideSelection} hasSuppressedDialogs={!!hasSuppressedDialogs} isLocalJSXCommandActive={isShowingLocalJSXCommand} getToolUseContext={getToolUseContext} toolPermissionContext={toolPermissionContext} setToolPermissionContext={setToolPermissionContext} apiKeyStatus={apiKeyStatus} commands={commands} agents={agentDefinitions.activeAgents} isLoading={isLoading} onExit={handleExit} verbose={verbose} messages={messages} onAutoUpdaterResult={setAutoUpdaterResult} autoUpdaterResult={autoUpdaterResult} input={inputValue} onInputChange={setInputValue} mode={inputMode} onModeChange={setInputMode} stashedPrompt={stashedPrompt} setStashedPrompt={setStashedPrompt} submitCount={submitCount} onShowMessageSelector={handleShowMessageSelector} onMessageActionsEnter={
             // Works during isLoading — edit cancels first; uuid selection survives appends.
-            feature('MESSAGE_ACTIONS') && isFullscreenEnvEnabled() && !disableMessageActions ? enterMessageActions : undefined} mcpClients={mcpClients} pastedContents={pastedContents} setPastedContents={setPastedContents} vimMode={vimMode} setVimMode={setVimMode} showBashesDialog={showBashesDialog} setShowBashesDialog={setShowBashesDialog} onSubmit={onSubmit} onAgentSubmit={onAgentSubmit} isSearchingHistory={isSearchingHistory} setIsSearchingHistory={setIsSearchingHistory} helpOpen={isHelpOpen} setHelpOpen={setIsHelpOpen} insertTextRef={feature('VOICE_MODE') ? insertTextRef : undefined} voiceInterimRange={voice.interimRange} />
+            feature('MESSAGE_ACTIONS') && isFullscreenEnvEnabled() && !disableMessageActions ? enterMessageActions : undefined} mcpClients={mcpClients} pastedContents={pastedContents} setPastedContents={setPastedContents} vimMode={vimMode} setVimMode={setVimMode} showBashesDialog={showBashesDialog} setShowBashesDialog={setShowBashesDialog} onOpenWorkflowView={setWorkflowViewId} onSubmit={onSubmit} onAgentSubmit={onAgentSubmit} isSearchingHistory={isSearchingHistory} setIsSearchingHistory={setIsSearchingHistory} helpOpen={isHelpOpen} setHelpOpen={setIsHelpOpen} insertTextRef={feature('VOICE_MODE') ? insertTextRef : undefined} voiceInterimRange={voice.interimRange} />
                       <SessionBackgroundHint onBackgroundSession={handleBackgroundSession} isLoading={isLoading} />
                     </>}
                 {cursor &&
@@ -5184,6 +5190,20 @@ export function REPL({
             </Box>} />
       </MCPConnectionManager>
     </KeybindingSetup>;
+  // Full-screen workflow detail overlay. Rendered as its own minimal
+  // AlternateScreen tree (NOT via FullscreenLayout's fullscreenModal) so the
+  // transcript/Messages are not mounted — FullscreenLayout's fullscreen branch
+  // wraps the transcript in an unbounded ScrollBox without AlternateScreen's
+  // height ceiling (see comment above), which OOMs while a turn streams. Esc is
+  // handled inside the view (back); no CancelRequestHandler here, so it can't
+  // leak to the main loop and abort the running workflow.
+  if (workflowViewId) {
+    return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
+        <KeybindingSetup>
+          <WorkflowFullscreenView workflowId={workflowViewId} onClose={() => setWorkflowViewId(null)} />
+        </KeybindingSetup>
+      </AlternateScreen>;
+  }
   if (isFullscreenEnvEnabled() || quickShellVisible) {
     return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
         {mainReturn}

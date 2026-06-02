@@ -269,7 +269,9 @@ function _temp4(s_1) {
   return s_1.expandedView;
 }
 function _temp3(t) {
-  return isBackgroundTask(t) && !(false && isPanelAgentTask(t));
+  // Running workflows render as dedicated footer rows (WorkflowFooterStatus),
+  // so they are excluded from the compact summary pill here.
+  return isBackgroundTask(t) && t.type !== 'local_workflow' && !(false && isPanelAgentTask(t));
 }
 function _temp2(s_0) {
   return s_0.viewingAgentTaskId;

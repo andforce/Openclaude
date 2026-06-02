@@ -106,6 +106,7 @@ import { QuickOpenDialog } from '../QuickOpenDialog.js';
 import TextInput from '../TextInput.js';
 import { ThinkingToggle } from '../ThinkingToggle.js';
 import { BackgroundTasksDialog } from '../tasks/BackgroundTasksDialog.js';
+import { abortWorkflow, getActiveWorkflows, getActiveWorkflowCount, subscribeWorkflows } from '../../tools/WorkflowTool/registry.js';
 import { shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
 import { TeamsDialog } from '../teams/TeamsDialog.js';
 import VimTextInput from '../VimTextInput.js';
@@ -159,6 +160,8 @@ type Props = {
   setVimMode: (mode: VimMode) => void;
   showBashesDialog: string | boolean;
   setShowBashesDialog: (show: string | boolean) => void;
+  /** Open the REPL-level full-screen workflow detail overlay for a registry id. */
+  onOpenWorkflowView?: (id: string) => void;
   onExit: () => void;
   getToolUseContext: (messages: Message[], newMessages: Message[], abortController: AbortController, mainLoopModel: string) => ProcessUserInputContext;
   onSubmit: (input: string, helpers: PromptInputHelpers, speculationAccept?: {
@@ -220,6 +223,7 @@ function PromptInput({
   setVimMode,
   showBashesDialog,
   setShowBashesDialog,
+  onOpenWorkflowView,
   onExit,
   getToolUseContext,
   onSubmit: onSubmitProp,
@@ -457,7 +461,11 @@ function PromptInput({
   // something is running.
   const tasksFooterVisible = (runningTaskCount > 0 || "external" === 'ant' && coordinatorTaskCount > 0) && !shouldHideTasksFooter(tasks, showSpinnerTree);
   const teamsFooterVisible = cachedTeams.length > 0;
-  const footerItems = useMemo(() => [tasksFooterVisible && 'tasks', tmuxFooterVisible && 'tmux', bagelFooterVisible && 'bagel', teamsFooterVisible && 'teams', bridgeFooterVisible && 'bridge', companionFooterVisible && 'companion'].filter(Boolean) as FooterItem[], [tasksFooterVisible, tmuxFooterVisible, bagelFooterVisible, teamsFooterVisible, bridgeFooterVisible, companionFooterVisible]);
+  // Foreground workflows live in the registry (not AppState.tasks); subscribe so
+  // the footer item appears/disappears as workflows start/finish.
+  const activeWorkflowCount = useSyncExternalStore(subscribeWorkflows, getActiveWorkflowCount, getActiveWorkflowCount);
+  const workflowFooterVisible = activeWorkflowCount > 0;
+  const footerItems = useMemo(() => [workflowFooterVisible && 'workflow', tasksFooterVisible && 'tasks', tmuxFooterVisible && 'tmux', bagelFooterVisible && 'bagel', teamsFooterVisible && 'teams', bridgeFooterVisible && 'bridge', companionFooterVisible && 'companion'].filter(Boolean) as FooterItem[], [workflowFooterVisible, tasksFooterVisible, tmuxFooterVisible, bagelFooterVisible, teamsFooterVisible, bridgeFooterVisible, companionFooterVisible]);
 
   // Effective selection: null if the selected pill stopped rendering (bridge
   // disconnected, task finished). The derivation makes the UI correct
@@ -1833,12 +1841,25 @@ function PromptInput({
           setShowBridgeDialog(true);
           selectFooterItem(null);
           break;
+        case 'workflow':
+          {
+            const wf = getActiveWorkflows()[0];
+            if (wf) onOpenWorkflowView?.(wf.id);
+            selectFooterItem(null);
+          }
+          break;
       }
     },
     'footer:clearSelection': () => {
       selectFooterItem(null);
     },
     'footer:close': () => {
+      if (footerItemSelected === 'workflow') {
+        const wf = getActiveWorkflows()[0];
+        if (wf) abortWorkflow(wf.id, wf.snapshot);
+        selectFooterItem(null);
+        return;
+      }
       if (tasksSelected && coordinatorTaskIndex >= 1) {
         const task = getVisibleAgentTasks(tasks)[coordinatorTaskIndex - 1];
         if (!task) return false;
