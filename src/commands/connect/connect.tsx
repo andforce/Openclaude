@@ -44,6 +44,11 @@ const PROVIDERS: OptionWithDescription<string>[] = [
     hint: 'OpenAI /v1/chat/completions · OpenAI, Ollama, vLLM, LM Studio… · base URL + optional key',
   },
   {
+    value: 'mimo-token-plan',
+    label: 'Xiaomi MiMo Token Plan',
+    hint: 'MiMo Token Plan (CN) · enter your API token · auto-fetches models',
+  },
+  {
     value: 'deepseek',
     label: 'DeepSeek',
     hint: 'DeepSeek API · enter your API token · auto-fetches models',
@@ -63,11 +68,17 @@ const PROVIDERS: OptionWithDescription<string>[] = [
 const OPENROUTER_ANTHROPIC_BASE_URL = 'https://openrouter.ai/api'
 
 const PRESET_BASE_URLS: Record<string, string> = {
+  'https://token-plan-cn.xiaomimimo.com': 'mimo-token-plan',
   'https://api.deepseek.com': 'deepseek',
   'https://api.kimi.com/coding/v1': 'kimi-code',
 }
 
 const PROVIDER_CONFIG: Record<string, { name: string; apiKeyUrl: string; keyPlaceholder: string }> = {
+  'mimo-token-plan': {
+    name: 'Xiaomi MiMo Token Plan',
+    apiKeyUrl: 'https://platform.xiaomimimo.com/',
+    keyPlaceholder: 'sk-...',
+  },
   'kimi-for-coding': {
     name: 'Kimi For Coding',
     apiKeyUrl: 'https://platform.moonshot.cn/',
@@ -735,6 +746,10 @@ export function ConnectDialog({
       setStep({ type: 'custom-anthropic', step: 'base' })
       return
     }
+    if (providerId === 'mimo-token-plan') {
+      setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://token-plan-cn.xiaomimimo.com' })
+      return
+    }
     if (providerId === 'deepseek') {
       setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://api.deepseek.com' })
       return
@@ -1369,7 +1384,7 @@ export function ConnectDialog({
               onSubmit={apiKey => {
                 // DeepSeek: fetch models from /v1/models + let user select.
                 // Kimi Code: skip model fetch, use well-known default model.
-                if (presetProviderId === 'deepseek') {
+                if (presetProviderId === 'deepseek' || presetProviderId === 'mimo-token-plan') {
                   setStep({
                     type: 'custom-openai',
                     step: 'fetching',
