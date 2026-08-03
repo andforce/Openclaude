@@ -19,6 +19,12 @@ import {
   CUSTOM_OPENAI_PROVIDER_ID,
   resolveCustomOpenAIProviderId,
 } from '../utils/customOpenAIProviders.js';
+import {
+  CONNECT_PROVIDER_DEFINITIONS,
+  OPENROUTER_ANTHROPIC_BASE_URL,
+  getConnectProviderDefinition,
+  getOpenAICompatiblePresetByBaseUrl,
+} from '../utils/connectProviderDefinitions.js';
 import { fetchCopilotModels } from '../services/api/copilotClient.js';
 import { fetchOpenAICompatibleModelIds, fetchAnthropicCompatibleModelIds, fetchOpenRouterAnthropicModelIds } from '../services/api/customOpenAIClient.js';
 import { Select } from './CustomSelect/select.js';
@@ -93,7 +99,6 @@ const COPILOT_CLIENT_ID = 'Ov23li8tweQw6odWQebz';
 const COPILOT_DEVICE_CODE_URL = 'https://github.com/login/device/code';
 const COPILOT_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000;
-const OPENROUTER_ANTHROPIC_BASE_URL = 'https://openrouter.ai/api';
 const PASTE_HERE_MSG = 'Paste code here if prompted > ';
 
 function parseManualModelIds(input: string): string[] {
@@ -832,13 +837,10 @@ function OAuthStatusMessage(t0) {
         }
         let t6;
         if ($[5] === Symbol.for("react.memo_cache_sentinel")) {
-          t6 = [{
-            label: <Text>Custom Anthropic-compatible API ·{" "}<Text dimColor={true}>custom base URL and optional API key</Text>{"\n"}</Text>,
-            value: "anthropic_custom"
-          }, {
-            label: <Text>OpenRouter Anthropic-compatible API ·{" "}<Text dimColor={true}>API key for multiple models</Text>{"\n"}</Text>,
-            value: "openrouter"
-          }];
+          t6 = CONNECT_PROVIDER_DEFINITIONS.map(provider => ({
+            label: <Text>{provider.label} ·{" "}<Text dimColor={true}>{provider.hint}</Text>{"\n"}</Text>,
+            value: provider.id
+          }));
           $[5] = t6;
         } else {
           t6 = $[5];
@@ -846,6 +848,7 @@ function OAuthStatusMessage(t0) {
         let t7;
         if ($[6] !== setLoginWithClaudeAi || $[7] !== setOAuthStatus) {
           t7 = <Box><Select options={t6} onChange={value_0 => {
+              const provider = getConnectProviderDefinition(value_0);
               if (value_0 === "platform") {
                 logEvent("tengu_oauth_platform_selected", {});
                 setOAuthStatus({
@@ -890,26 +893,34 @@ function OAuthStatusMessage(t0) {
                     }
                   });
                 });
-              } else if (value_0 === "openrouter") {
+              } else if (provider?.kind === "openrouter") {
                 logEvent("tengu_oauth_openrouter_selected", {});
                 setPastedCode("");
                 setOAuthStatus({
                   state: "openrouter_setup",
                   step: "key"
                 });
-              } else if (value_0 === "openai_custom") {
+              } else if (provider?.kind === "custom-openai") {
                 logEvent("tengu_oauth_openai_custom_selected", {});
                 setPastedCode("");
                 setOAuthStatus({
                   state: "openai_custom_setup",
                   step: "base"
                 });
-              } else if (value_0 === "anthropic_custom") {
+              } else if (provider?.kind === "custom-anthropic") {
                 logEvent("tengu_oauth_anthropic_custom_selected", {});
                 setPastedCode("");
                 setOAuthStatus({
                   state: "anthropic_custom_setup",
                   step: "base"
+                });
+              } else if (provider?.kind === "preset-openai") {
+                logEvent("tengu_oauth_openai_custom_selected", {});
+                setPastedCode("");
+                setOAuthStatus({
+                  state: "openai_custom_setup",
+                  step: "key",
+                  baseUrl: provider.baseUrl
                 });
               } else {
                 setOAuthStatus({
@@ -1145,6 +1156,8 @@ function OAuthStatusMessage(t0) {
     case "openai_custom_setup":
       {
         const st = oauthStatus;
+        const preset = getOpenAICompatiblePresetByBaseUrl(st.baseUrl);
+        const setupTitle = preset?.label || "Custom OpenAI-compatible API";
         if (st.step === "base") {
           return <Box flexDirection="column" gap={1} marginTop={1}>
             <Text bold={true}>Custom OpenAI-compatible API</Text>
@@ -1173,7 +1186,7 @@ function OAuthStatusMessage(t0) {
         }
         if (st.step === "fetching_models") {
           return <Box flexDirection="column" gap={1} marginTop={1}>
-            <Text bold={true}>Custom OpenAI-compatible API</Text>
+            <Text bold={true}>{setupTitle}</Text>
             <Box><Spinner /><Text> Fetching models from GET /v1/models…</Text></Box>
             <Text dimColor={true}>Press <Text bold={true}>Esc</Text> to cancel.</Text>
           </Box>;
@@ -1223,7 +1236,7 @@ function OAuthStatusMessage(t0) {
           </Box>;
         }
         if (st.step === "models_fetch_error") {
-          return <ModelsFetchErrorChoice title="Custom OpenAI-compatible API" baseUrl={st.baseUrl} fetchError={st.fetchError} onEditBaseUrl={() => {
+          return <ModelsFetchErrorChoice title={setupTitle} baseUrl={st.baseUrl} fetchError={st.fetchError} onEditBaseUrl={() => {
             setPastedCode("");
             setOAuthStatus({
               state: "openai_custom_setup",
@@ -1256,7 +1269,7 @@ function OAuthStatusMessage(t0) {
           }} />;
         }
         if (st.step === "manual_models") {
-          return <ManualModelIdsInput title="Custom OpenAI-compatible API" fetchError={st.fetchError} onCancel={() => {
+          return <ManualModelIdsInput title={setupTitle} fetchError={st.fetchError} onCancel={() => {
             setPastedCode("");
             setOAuthStatus({
               state: "idle"
@@ -1281,6 +1294,61 @@ function OAuthStatusMessage(t0) {
                   models
                 });
               }} />;
+        }
+        if (preset) {
+          return <Box flexDirection="column" gap={1} marginTop={1}>
+            <Text bold={true}>{setupTitle}</Text>
+            {st.fetchError ? <Text color="error">{st.fetchError}</Text> : null}
+            <Text>Enter your {setupTitle} API token.</Text>
+            <Text>Get it from:{" "}<Link url={preset.apiKeyUrl}>{preset.apiKeyUrl}</Link></Text>
+            <Box marginTop={1} flexDirection="column">
+              <Text>API Key: </Text>
+              <TextInput value={pastedCode} onChange={setPastedCode} onSubmit={value_0 => {
+                const apiKey = value_0.trim();
+                setPastedCode("");
+                if (!apiKey) {
+                  setOAuthStatus({
+                    state: "openai_custom_setup",
+                    step: "key",
+                    baseUrl: st.baseUrl,
+                    fetchError: "API Key is required."
+                  });
+                  return;
+                }
+                if (preset.defaultModel) {
+                  saveGlobalConfig(current => ({
+                    ...current,
+                    ...(() => {
+                      const providerId = resolveCustomOpenAIProviderId(current, st.baseUrl || "");
+                      return {
+                        connectedProviders: {
+                          ...(current.connectedProviders || {}),
+                          [providerId]: {
+                            apiKey,
+                            baseUrl: st.baseUrl || "",
+                            defaultModel: preset.defaultModel,
+                            connectedAt: new Date().toISOString()
+                          }
+                        },
+                        activeProvider: providerId
+                      };
+                    })()
+                  }));
+                  setOAuthStatus({
+                    state: "success"
+                  });
+                  return;
+                }
+                setOAuthStatus({
+                  state: "openai_custom_setup",
+                  step: "fetching_models",
+                  baseUrl: st.baseUrl,
+                  apiKey
+                });
+              }} cursorOffset={cursorOffset} onChangeCursorOffset={setCursorOffset} columns={textInputColumns} mask="*" />
+            </Box>
+            <Text dimColor={true}>Press <Text bold={true}>Enter</Text> to continue. Press <Text bold={true}>Esc</Text> to cancel.</Text>
+          </Box>;
         }
         return <Box flexDirection="column" gap={1} marginTop={1}>
             <Text bold={true}>Custom OpenAI-compatible API</Text>

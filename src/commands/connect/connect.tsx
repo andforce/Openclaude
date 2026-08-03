@@ -26,80 +26,44 @@ import {
   resolveCustomOpenAIProviderId,
 } from '../../utils/customOpenAIProviders.js'
 import { clearUserSpecifiedModelSetting } from '../../utils/model/model.js'
+import {
+  CONNECT_PROVIDER_DEFINITIONS,
+  OPENROUTER_ANTHROPIC_BASE_URL,
+  getConnectProviderDefinition,
+  getOpenAICompatiblePresetByBaseUrl,
+  type ConnectProviderId,
+} from '../../utils/connectProviderDefinitions.js'
 
 const COPILOT_CLIENT_ID = 'Ov23li8tweQw6odWQebz'
 const COPILOT_DEVICE_CODE_URL = 'https://github.com/login/device/code'
 const COPILOT_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
 
-const PROVIDERS: OptionWithDescription<string>[] = [
-  {
-    value: 'custom-anthropic',
-    label: 'Custom Anthropic-compatible API',
-    hint: 'Self-hosted or LAN · base URL + optional key · pick model from /v1/models',
-  },
-  {
-    value: 'custom-openai',
-    label: 'Custom OpenAI-compatible API',
-    hint: 'OpenAI /v1/chat/completions · OpenAI, Ollama, vLLM, LM Studio… · base URL + optional key',
-  },
-  {
-    value: 'mimo-token-plan',
-    label: 'Xiaomi MiMo Token Plan',
-    hint: 'MiMo Token Plan (CN) · enter your API token · auto-fetches models',
-  },
-  {
-    value: 'deepseek',
-    label: 'DeepSeek',
-    hint: 'DeepSeek API · enter your API token · auto-fetches models',
-  },
-  {
-    value: 'kimi-code',
-    label: 'Kimi Code',
-    hint: 'Kimi Code API · enter your API token · auto-fetches models',
-  },
-  {
-    value: 'openrouter',
-    label: 'OpenRouter Anthropic-compatible API',
-    hint: 'Unified API for multiple models',
-  },
-]
+const PROVIDERS: OptionWithDescription<ConnectProviderId>[] = CONNECT_PROVIDER_DEFINITIONS.map(
+  provider => ({
+    value: provider.id,
+    label: provider.label,
+    hint: provider.hint,
+  }),
+)
 
-const OPENROUTER_ANTHROPIC_BASE_URL = 'https://openrouter.ai/api'
-
-const PRESET_BASE_URLS: Record<string, string> = {
-  'https://token-plan-cn.xiaomimimo.com': 'mimo-token-plan',
-  'https://api.deepseek.com': 'deepseek',
-  'https://api.kimi.com/coding/v1': 'kimi-code',
-}
-
-const PROVIDER_CONFIG: Record<string, { name: string; apiKeyUrl: string; keyPlaceholder: string }> = {
-  'mimo-token-plan': {
-    name: 'Xiaomi MiMo Token Plan',
-    apiKeyUrl: 'https://platform.xiaomimimo.com/',
-    keyPlaceholder: 'sk-...',
-  },
-  'kimi-for-coding': {
-    name: 'Kimi For Coding',
-    apiKeyUrl: 'https://platform.moonshot.cn/',
-    keyPlaceholder: 'sk-...',
-  },
-  deepseek: {
-    name: 'DeepSeek',
-    apiKeyUrl: 'https://platform.deepseek.com/api_keys',
-    keyPlaceholder: 'sk-...',
-  },
-  'kimi-code': {
-    name: 'Kimi Code',
-    apiKeyUrl: 'https://platform.moonshot.cn/',
-    keyPlaceholder: 'sk-...',
-  },
-  openrouter: {
-    name: 'OpenRouter Anthropic-compatible API',
-    apiKeyUrl: 'https://openrouter.ai/keys',
-    keyPlaceholder: 'sk-or-...',
-  },
-}
+const PROVIDER_CONFIG: Record<
+  string,
+  { name: string; apiKeyUrl: string; keyPlaceholder: string }
+> = Object.fromEntries(
+  CONNECT_PROVIDER_DEFINITIONS.flatMap(provider =>
+    provider.kind === 'preset-openai' || provider.kind === 'openrouter'
+      ? [[
+          provider.id,
+          {
+            name: provider.label,
+            apiKeyUrl: provider.apiKeyUrl,
+            keyPlaceholder: provider.keyPlaceholder,
+          },
+        ]]
+      : [],
+  ),
+)
 
 type ConnectStep =
   | { type: 'select-provider' }
@@ -738,36 +702,32 @@ export function ConnectDialog({
       return
     }
 
-    if (providerId === 'custom-openai') {
-      setStep({ type: 'custom-openai', step: 'base' })
-      return
-    }
-    if (providerId === 'custom-anthropic') {
-      setStep({ type: 'custom-anthropic', step: 'base' })
-      return
-    }
-    if (providerId === 'mimo-token-plan') {
-      setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://token-plan-cn.xiaomimimo.com' })
-      return
-    }
-    if (providerId === 'deepseek') {
-      setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://api.deepseek.com' })
-      return
-    }
-    if (providerId === 'kimi-code') {
-      setStep({ type: 'custom-openai', step: 'key', baseUrl: 'https://api.kimi.com/coding/v1' })
-      return
-    }
-    if (providerId === 'openrouter') {
-      setStep({ type: 'openrouter', step: 'key' })
-      return
-    }
-
-    if (!PROVIDER_CONFIG[providerId]) {
+    const provider = getConnectProviderDefinition(providerId)
+    if (!provider) {
       setStep({ type: 'error', error: `Unknown provider: ${providerId}` })
       return
     }
-    setStep({ type: 'enter-api-key', providerId })
+
+    if (provider.kind === 'custom-openai') {
+      setStep({ type: 'custom-openai', step: 'base' })
+      return
+    }
+    if (provider.kind === 'custom-anthropic') {
+      setStep({ type: 'custom-anthropic', step: 'base' })
+      return
+    }
+    if (provider.kind === 'preset-openai') {
+      setStep({
+        type: 'custom-openai',
+        step: 'key',
+        baseUrl: provider.baseUrl,
+      })
+      return
+    }
+    if (provider.kind === 'openrouter') {
+      setStep({ type: 'openrouter', step: 'key' })
+      return
+    }
   }
 
   const handleApiKeySubmit = (apiKey: string) => {
@@ -1235,9 +1195,8 @@ export function ConnectDialog({
       )
     }
     if (step.step === 'fetching') {
-      const dialogTitle = PRESET_BASE_URLS[step.baseUrl || '']
-        ? PROVIDER_CONFIG[PRESET_BASE_URLS[step.baseUrl || '']]?.name
-        : 'Custom OpenAI-compatible API'
+      const dialogTitle = getOpenAICompatiblePresetByBaseUrl(step.baseUrl)?.label
+        || 'Custom OpenAI-compatible API'
       return (
         <Dialog title={dialogTitle} onCancel={handleCancel}>
           <Box flexDirection="column" gap={1}>
@@ -1252,9 +1211,8 @@ export function ConnectDialog({
     }
     if (step.step === 'models-fetch-error') {
       const st = step
-      const dialogTitle = st.baseUrl && PRESET_BASE_URLS[st.baseUrl]
-        ? PROVIDER_CONFIG[PRESET_BASE_URLS[st.baseUrl]]?.name
-        : 'Custom OpenAI-compatible API'
+      const dialogTitle = getOpenAICompatiblePresetByBaseUrl(st.baseUrl)?.label
+        || 'Custom OpenAI-compatible API'
       return (
         <Dialog title={dialogTitle} onCancel={handleCancel}>
           <ModelsFetchErrorChoice
@@ -1291,9 +1249,8 @@ export function ConnectDialog({
     }
     if (step.step === 'select' && step.models && step.models.length > 0) {
       const st = step
-      const dialogTitle = st.baseUrl && PRESET_BASE_URLS[st.baseUrl]
-        ? PROVIDER_CONFIG[PRESET_BASE_URLS[st.baseUrl]]?.name
-        : 'Custom OpenAI-compatible API'
+      const dialogTitle = getOpenAICompatiblePresetByBaseUrl(st.baseUrl)?.label
+        || 'Custom OpenAI-compatible API'
       return (
         <Dialog title={dialogTitle} onCancel={handleCancel}>
           <SearchableModelSelect
@@ -1373,18 +1330,18 @@ export function ConnectDialog({
         </Dialog>
       )
     }
-    const presetProviderId = PRESET_BASE_URLS[step.baseUrl || '']
-    if (presetProviderId) {
+    const presetProvider = getOpenAICompatiblePresetByBaseUrl(step.baseUrl)
+    if (presetProvider) {
       return (
-        <Dialog title={PROVIDER_CONFIG[presetProviderId].name} onCancel={handleCancel}>
+        <Dialog title={presetProvider.label} onCancel={handleCancel}>
           <Box flexDirection="column" gap={1}>
             {step.fetchError ? <Text color="red">{step.fetchError}</Text> : null}
             <ApiKeyInput
-              providerId={presetProviderId}
+              providerId={presetProvider.id}
               onSubmit={apiKey => {
                 // DeepSeek: fetch models from /v1/models + let user select.
                 // Kimi Code: skip model fetch, use well-known default model.
-                if (presetProviderId === 'deepseek' || presetProviderId === 'mimo-token-plan') {
+                if (!presetProvider.defaultModel) {
                   setStep({
                     type: 'custom-openai',
                     step: 'fetching',
@@ -1394,7 +1351,7 @@ export function ConnectDialog({
                   return
                 }
                 // Kimi Code path
-                const defaultModel = 'kimi-for-coding'
+                const defaultModel = presetProvider.defaultModel
                 const providerId = resolveCustomOpenAIProviderId(
                   getGlobalConfig(),
                   step.baseUrl || '',
