@@ -6,6 +6,8 @@ import { getCanonicalName } from './model/model.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { getAPIProvider } from './model/providers.js'
 import { getSettingsWithErrors } from './settings/settings.js'
+import { getGlobalConfig } from './config.js'
+import { isDeepSeekOfficialModelSelection } from './deepseek.js'
 
 export type ThinkingConfig =
   | { type: 'adaptive' }
@@ -91,6 +93,9 @@ export function modelSupportsThinking(model: string): boolean {
   const supported3P = get3PModelCapabilityOverride(model, 'thinking')
   if (supported3P !== undefined) {
     return supported3P
+  }
+  if (isDeepSeekOfficialModelSelection(model, getGlobalConfig())) {
+    return true
   }
   if (process.env.USER_TYPE === 'ant') {
     if (resolveAntModel(model.toLowerCase())) {

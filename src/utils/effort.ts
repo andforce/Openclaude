@@ -8,6 +8,8 @@ import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { isEnvTruthy } from './envUtils.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
 import { getAnthropicCompatibleModelId } from './customAnthropicProviders.js'
+import { getGlobalConfig } from './config.js'
+import { isDeepSeekOfficialModelSelection } from './deepseek.js'
 
 export type { EffortLevel }
 
@@ -25,6 +27,9 @@ export function modelSupportsEffort(model: string): boolean {
   const modelId = getAnthropicCompatibleModelId(model)
   const m = modelId.toLowerCase()
   if (isEnvTruthy(process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT)) {
+    return true
+  }
+  if (isDeepSeekOfficialModelSelection(model, getGlobalConfig())) {
     return true
   }
   const supported3P = get3PModelCapabilityOverride(modelId, 'effort')
@@ -54,6 +59,9 @@ export function modelSupportsEffort(model: string): boolean {
 // Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
 export function modelSupportsMaxEffort(model: string): boolean {
   const modelId = getAnthropicCompatibleModelId(model)
+  if (isDeepSeekOfficialModelSelection(model, getGlobalConfig())) {
+    return true
+  }
   const supported3P = get3PModelCapabilityOverride(modelId, 'max_effort')
   if (supported3P !== undefined) {
     return supported3P

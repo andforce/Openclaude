@@ -24,6 +24,7 @@ import {
   foldDeepSeekMessagesIfNeeded,
 } from './deepseekFold.js'
 import { stringifyJsonTransport } from './jsonTransport.js'
+import { isDeepSeekOfficialBaseUrl } from '../../utils/deepseek.js'
 
 /** Resolve which connected custom-openai provider a model value belongs to. */
 function resolveProviderIdForModel(model: string | undefined): string {
@@ -227,6 +228,24 @@ export function isMiMoProvider(baseUrl: string | undefined, modelId: string): bo
   return modelId.toLowerCase().includes('mimo')
 }
 
+type DeepSeekReasoningEffort = 'low' | 'high' | 'xhigh' | 'max'
+
+/** Translate the app's effort vocabulary to DeepSeek's accepted wire values. */
+function normalizeDeepSeekReasoningEffort(
+  effort: unknown,
+): DeepSeekReasoningEffort {
+  if (
+    effort === 'low' ||
+    effort === 'high' ||
+    effort === 'xhigh' ||
+    effort === 'max'
+  ) {
+    return effort
+  }
+  // DeepSeek has no `medium`; its documented default is `high`.
+  return 'high'
+}
+
 /** Whether the configured base points at DeepSeek's `/beta` endpoint (where strict mode lives). */
 function isDeepSeekBetaBase(baseUrl: string | undefined): boolean {
   if (!baseUrl) {
@@ -405,6 +424,7 @@ export function createCustomOpenAIFetchOverride(
 
   const openaiModelId = getCustomOpenAIModelId(model)
   const deepseek = isDeepSeekProvider(provider.baseUrl, openaiModelId)
+  const deepseekOfficial = isDeepSeekOfficialBaseUrl(provider.baseUrl)
   const kimi = isKimiProvider(provider.baseUrl, openaiModelId)
   const mimo = isMiMoProvider(provider.baseUrl, openaiModelId)
   // Strict tool mode is a DeepSeek beta feature — opt in by connecting to the
@@ -458,14 +478,26 @@ export function createCustomOpenAIFetchOverride(
         .join('\n\n')
     }
 
-    const anthropicMessages = (anthropicBody.messages || []) as AnthropicMessage[]
-    let openaiMessages = convertAnthropicMessagesToOpenAI(anthropicMessages, systemPrompt, { deepseek, model: openaiModelId, requiresReasoningContent: kimi })
-
     const anthropicTools = (anthropicBody.tools || []) as Array<{
       name: string
       description?: string
       input_schema?: Record<string, unknown>
     }>
+    const anthropicMessages = (anthropicBody.messages || []) as AnthropicMessage[]
+    let openaiMessages = convertAnthropicMessagesToOpenAI(
+      anthropicMessages,
+      systemPrompt,
+      {
+        deepseek,
+        model: openaiModelId,
+        requiresReasoningContent: kimi,
+        // DeepSeek requires every historical reasoning_content block to be
+        // echoed when tools are present, including completed text-only turns.
+        preserveAllReasoningContent:
+          deepseekOfficial && anthropicTools.length > 0,
+      },
+    )
+
     // DeepSeek: sort tools by name and canonicalize input schemas so the
     // tool-list byte sequence is deterministic across MCP server restarts
     // and import-order changes. Mirrors Reasonix registry.ts:195-197.
@@ -524,6 +556,32 @@ export function createCustomOpenAIFetchOverride(
       stream: isStreaming,
     }
 
+    // The CLI builds an Anthropic-format request internally. Translate its
+    // thinking controls to DeepSeek's OpenAI Chat Completions wire format, but
+    // only for the official DeepSeek provider selected via /connect or /login.
+    // An omitted/disabled Anthropic thinking block must be explicit here because
+    // DeepSeek otherwise enables thinking by default.
+    const anthropicThinking = anthropicBody.thinking as
+      | { type?: string }
+      | undefined
+    const deepseekThinkingEnabled =
+      deepseekOfficial &&
+      anthropicThinking !== undefined &&
+      anthropicThinking.type !== 'disabled'
+    if (deepseekOfficial) {
+      requestBody.thinking = {
+        type: deepseekThinkingEnabled ? 'enabled' : 'disabled',
+      }
+      if (deepseekThinkingEnabled) {
+        const outputConfig = anthropicBody.output_config as
+          | { effort?: unknown }
+          | undefined
+        requestBody.reasoning_effort = normalizeDeepSeekReasoningEffort(
+          outputConfig?.effort,
+        )
+      }
+    }
+
     // DeepSeek requires stream_options.include_usage to return
     // prompt_cache_hit/miss_tokens in streaming responses. Without
     // this flag, cached tokens are billed at full price.
@@ -542,10 +600,13 @@ export function createCustomOpenAIFetchOverride(
     }
 
     // Pass through sampling parameters when the caller set them.
-    if (typeof anthropicBody.temperature === 'number') {
+    if (
+      !deepseekThinkingEnabled &&
+      typeof anthropicBody.temperature === 'number'
+    ) {
       requestBody.temperature = anthropicBody.temperature
     }
-    if (typeof anthropicBody.top_p === 'number') {
+    if (!deepseekThinkingEnabled && typeof anthropicBody.top_p === 'number') {
       requestBody.top_p = anthropicBody.top_p
     }
     if (

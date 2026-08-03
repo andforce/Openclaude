@@ -11,8 +11,9 @@ import {
   getCustomOpenAIProvider,
   isCustomOpenAIConnected,
 } from './customOpenAIClient.js'
+import { isDeepSeekOfficialBaseUrl } from '../../utils/deepseek.js'
 
-const OFFICIAL_HOST = 'api.deepseek.com'
+export { isDeepSeekOfficialBaseUrl } from '../../utils/deepseek.js'
 
 export interface DeepSeekBalance {
   currency: string
@@ -33,18 +34,6 @@ interface RawUserBalance {
   balance_infos?: RawBalanceInfo[]
 }
 
-/** True only for the official DeepSeek base URL (`https://api.deepseek.com`). */
-export function isDeepSeekOfficialBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) {
-    return false
-  }
-  try {
-    return new URL(baseUrl).hostname.toLowerCase() === OFFICIAL_HOST
-  } catch {
-    return false
-  }
-}
-
 /** True when the connected custom-openai provider points at official DeepSeek. */
 export function isDeepSeekOfficialActive(): boolean {
   if (!isCustomOpenAIConnected()) {
@@ -55,11 +44,11 @@ export function isDeepSeekOfficialActive(): boolean {
 
 /** Build the balance endpoint from the host root (never under /v1 or /beta). */
 function officialBalanceUrl(baseUrl: string): string | null {
+  if (!isDeepSeekOfficialBaseUrl(baseUrl)) {
+    return null
+  }
   try {
     const u = new URL(baseUrl)
-    if (u.hostname.toLowerCase() !== OFFICIAL_HOST) {
-      return null
-    }
     return `${u.origin}/user/balance`
   } catch {
     return null

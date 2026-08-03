@@ -622,7 +622,12 @@ export type AnthropicMessage = {
 export function convertAnthropicMessagesToOpenAI(
   messages: AnthropicMessage[],
   systemPrompt?: string,
-  opts?: { deepseek?: boolean; model?: string; requiresReasoningContent?: boolean },
+  opts?: {
+    deepseek?: boolean
+    model?: string
+    requiresReasoningContent?: boolean
+    preserveAllReasoningContent?: boolean
+  },
 ): OpenAIMessage[] {
   const result: OpenAIMessage[] = []
   const deepseek = opts?.deepseek === true
@@ -741,7 +746,7 @@ export function convertAnthropicMessagesToOpenAI(
 
   // DeepSeek: strip stale reasoning from completed text-only turns in
   // history to keep the append-only log byte-stable and save tokens.
-  if (deepseek) {
+  if (deepseek && !opts?.preserveAllReasoningContent) {
     const stripped = stripDroppableReasoningContent(result)
     return stripped.messages
   }
