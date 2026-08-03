@@ -56,7 +56,8 @@ export function modelSupportsEffort(model: string): boolean {
 }
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
-// Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
+// Per API docs, 'max' is available only on selected models; unsupported models
+// either reject it or are clamped before the request is sent.
 export function modelSupportsMaxEffort(model: string): boolean {
   const modelId = getAnthropicCompatibleModelId(model)
   if (isDeepSeekOfficialModelSelection(model, getGlobalConfig())) {
@@ -241,7 +242,7 @@ export function getEffortLevelDescription(level: EffortLevel): string {
     case 'high':
       return 'Comprehensive implementation with extensive testing and documentation'
     case 'max':
-      return 'Maximum capability with deepest reasoning (Opus 4.6 only)'
+      return 'Maximum capability with deepest reasoning (supported models only)'
   }
 }
 

@@ -1,10 +1,16 @@
 import { c as _c } from "react/compiler-runtime";
 import * as React from 'react';
+import { Box, Text } from '../../ink.js';
+import type { OptionWithDescription } from '../../components/CustomSelect/select.js';
+import { Select } from '../../components/CustomSelect/select.js';
+import { PermissionDialog } from '../../components/permissions/PermissionDialog.js';
 import { useMainLoopModel } from '../../hooks/useMainLoopModel.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import type { LocalJSXCommandOnDone } from '../../types/command.js';
-import { type EffortValue, getDisplayedEffortLevel, getEffortEnvOverride, getEffortValueDescription, isEffortLevel, toPersistableEffort } from '../../utils/effort.js';
+import { getGlobalConfig } from '../../utils/config.js';
+import { isDeepSeekOfficialModelSelection } from '../../utils/deepseek.js';
+import { convertEffortValueToLevel, type EffortLevel, type EffortValue, getDisplayedEffortLevel, getEffortEnvOverride, getEffortValueDescription, isEffortLevel, modelSupportsMaxEffort, toPersistableEffort } from '../../utils/effort.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
 const COMMON_HELP_ARGS = ['help', '-h', '--help'];
 type EffortCommandResult = {
@@ -168,13 +174,75 @@ function ApplyEffortAndClose(t0) {
   React.useEffect(t1, t2);
   return null;
 }
+type EffortPickerSelection = EffortLevel | 'auto';
+function EffortPicker({
+  onDone
+}: {
+  onDone: LocalJSXCommandOnDone;
+}): React.ReactNode {
+  const effortValue = useAppState(_temp);
+  const model = useMainLoopModel();
+  const setAppState = useSetAppState();
+  const envOverride = getEffortEnvOverride();
+  const displayedLevel = getDisplayedEffortLevel(model, effortValue);
+  const isDeepSeek = isDeepSeekOfficialModelSelection(model, getGlobalConfig());
+  const supportsMax = modelSupportsMaxEffort(model);
+  const explicitValue = envOverride === null ? 'auto' : envOverride ?? effortValue ?? 'auto';
+  const convertedValue = explicitValue === 'auto' ? 'auto' : convertEffortValueToLevel(explicitValue);
+  const currentValue = isDeepSeek && convertedValue === 'medium' ? 'high' : convertedValue;
+  const options: OptionWithDescription<EffortPickerSelection>[] = [{
+    label: <Text>Auto</Text>,
+    value: 'auto',
+    description: `Use the model default (currently ${displayedLevel})`
+  }, {
+    label: <Text>Low</Text>,
+    value: 'low',
+    description: 'Faster responses with lighter reasoning'
+  }];
+  if (!isDeepSeek) {
+    options.push({
+      label: <Text>Medium</Text>,
+      value: 'medium',
+      description: 'Balanced reasoning effort'
+    });
+  }
+  options.push({
+    label: <Text>High</Text>,
+    value: 'high',
+    description: isDeepSeek ? 'DeepSeek default reasoning effort' : 'Deeper reasoning for complex tasks'
+  });
+  if (supportsMax) {
+    options.push({
+      label: <Text>Max</Text>,
+      value: 'max',
+      description: 'Maximum available reasoning effort'
+    });
+  }
+  const defaultFocusValue = options.some(option => option.value === currentValue) ? currentValue : 'auto';
+  const handleSelect = (selection: EffortPickerSelection) => {
+    const result = executeEffort(selection);
+    if (result.effortUpdate) {
+      setAppState(previous => ({
+        ...previous,
+        effortValue: result.effortUpdate?.value
+      }));
+    }
+    onDone(result.message);
+  };
+  return <PermissionDialog title="Select effort level"><Box flexDirection="column" paddingX={2} paddingY={1}><Box marginBottom={1}><Text dimColor={true}>Choose how much reasoning the current model should use.</Text></Box><Select options={options} defaultValue={defaultFocusValue} defaultFocusValue={defaultFocusValue} onChange={handleSelect} onCancel={() => onDone(undefined, {
+        display: 'skip'
+      })} /></Box></PermissionDialog>;
+}
 export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, args?: string): Promise<React.ReactNode> {
   args = args?.trim() || '';
   if (COMMON_HELP_ARGS.includes(args)) {
-    onDone('Usage: /effort [low|medium|high|max|auto]\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning (Opus 4.6 only)\n- auto: Use the default effort level for your model');
+    onDone('Usage: /effort [low|medium|high|max|auto]\n\nRun /effort without an argument to open the selector.\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning (supported models only)\n- auto: Use the default effort level for your model');
     return;
   }
-  if (!args || args === 'current' || args === 'status') {
+  if (!args) {
+    return <EffortPicker onDone={onDone} />;
+  }
+  if (args === 'current' || args === 'status') {
     return <ShowCurrentEffort onDone={onDone} />;
   }
   const result = executeEffort(args);
